@@ -835,3 +835,75 @@ fn protocol_numbers_match_the_oci_wire_form() {
     assert_eq!(oci_protocol(Protocol::Tcp), "6");
     assert_eq!(oci_protocol(Protocol::Udp), "17");
 }
+
+/// An NSG created but not attached leaves an object the user did not have
+/// before, so it is reported as a partial mutation naming the group — not as a
+/// bare failure the user has to investigate.
+#[tokio::test]
+async fn an_nsg_created_but_not_attached_is_reported_as_a_partial_mutation() {
+    let mock = MockOci::builder()
+        .get(
+            "/vnicAttachments",
+            &json!([{
+                "id": "ocid1.vnicattachment.oc1.iad.a",
+                "instanceId": INSTANCE_ID,
+                "vnicId": VNIC_ID,
+                "lifecycleState": "ATTACHED"
+            }]),
+        )
+        .get(&format!("/instances/{INSTANCE_ID}"), &instance_json())
+        .get("/instances?", &json!([instance_json()]))
+        .get(
+            &format!("/vnics/{VNIC_ID}"),
+            &vnic_json(&[], Some("203.0.113.17")),
+        )
+        .get(&format!("/subnets/{SUBNET_ID}"), &subnet_json())
+        .get(
+            &format!("/securityLists/{SECURITY_LIST_ID}"),
+            &security_list_json(json!([])),
+        )
+        .get(
+            &format!("/routeTables/{ROUTE_TABLE_ID}"),
+            &route_table_json(),
+        )
+        .get(&format!("/internetGateways/{GATEWAY_ID}"), &gateway_json())
+        .reply(
+            "POST",
+            "/networkSecurityGroups",
+            Reply::json(&managed_nsg_json()),
+        )
+        // The VNIC update is what fails.
+        .reply(
+            "PUT",
+            &format!("/vnics/{VNIC_ID}"),
+            Reply::new(409, r#"{"code":"Conflict","message":"vnic is updating"}"#)
+                .header("opc-request-id", "req-11"),
+        )
+        .start()
+        .await;
+
+    let error = open(
+        &context(&mock),
+        "free-arm-1",
+        https(),
+        Some("198.51.100.7/32"),
+        true,
+    )
+    .await
+    .expect_err("the attachment fails");
+
+    assert_eq!(error.kind(), crate::error::ErrorKind::PartialMutation);
+    assert_eq!(error.exit_code_kind().code(), 7);
+    assert!(error.context().expect("context").contains(MANAGED_NSG_ID));
+    assert!(
+        error.remediation().contains("idempotency token"),
+        "the user must be told that re-running reuses the group"
+    );
+    assert!(
+        !mock
+            .writes()
+            .iter()
+            .any(|write| write.target().contains("addSecurityRules")),
+        "no rule may be added to an NSG that is not attached"
+    );
+}

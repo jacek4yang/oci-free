@@ -14,7 +14,7 @@ use crate::{
     commands::{account::usage_unavailable, context::CommandContext},
     domain::time::UtcDateTime,
     error::Result,
-    oci::usage::{UsageApi, UsageQuery},
+    oci::usage::{UsageAggregation, UsageApi, UsageQuery},
 };
 
 /// One service with a non-zero charge.
@@ -79,9 +79,7 @@ pub async fn run(context: &CommandContext) -> Result<CostReport> {
         }
     };
 
-    let total = aggregation
-        .as_ref()
-        .and_then(super::super::oci::usage::UsageAggregation::total);
+    let total = aggregation.as_ref().and_then(UsageAggregation::total);
     let currency = aggregation
         .as_ref()
         .and_then(|aggregation| aggregation.currency().map(str::to_owned));

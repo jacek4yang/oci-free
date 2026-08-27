@@ -509,7 +509,7 @@ fn reachability(inputs: &ExposureInputs<'_>, warnings: &mut Vec<String>) -> Inte
 
     let gateway_enabled = inputs
         .internet_gateway
-        .is_some_and(super::super::oci::network::InternetGateway::is_usable);
+        .is_some_and(InternetGateway::is_usable);
 
     let has_default_route = default_route.is_some();
     let reachable = public_ip.is_some() && has_default_route && gateway_enabled;

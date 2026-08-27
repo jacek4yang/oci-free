@@ -508,12 +508,25 @@ async fn apply_open(
             None => {
                 let nsg = create_managed_nsg(context, instance, network, approval).await?;
                 let name = nsg.display_name.clone().unwrap_or_else(|| nsg.id.clone());
-                attach_nsg(context, network, &nsg.id, approval).await?;
+                // The NSG now exists. If attaching it fails, say so rather than
+                // leaving behind an object the user has no reason to expect:
+                // the create carries a stable idempotency token, so re-running
+                // the command reuses this group instead of making a second one.
+                attach_nsg(context, network, &nsg.id, approval)
+                    .await
+                    .map_err(|error| orphaned_nsg(&nsg.id, &name, &error))?;
                 (nsg.id, name, true)
             }
         };
 
-    add_rule(&api, &nsg_id, rule, source, approval).await?;
+    match add_rule(&api, &nsg_id, rule, source, approval).await {
+        Ok(()) => {}
+        // The rule failed on an NSG this command had just created, so report
+        // the group too: it exists, it is empty, and that is not obvious from
+        // the rule failure alone.
+        Err(error) if created => return Err(orphaned_nsg(&nsg_id, &nsg_name, &error)),
+        Err(error) => return Err(error),
+    }
 
     // Verify against a fresh read; never report success from the write alone.
     let after = load_network(context, instance).await;
@@ -564,6 +577,25 @@ async fn apply_open(
         residual_exposure: residual,
         warnings,
     })
+}
+
+/// Report a managed NSG that was created but could not be finished.
+///
+/// A partial mutation rather than a plain failure: an OCI object exists that
+/// the user did not have before, so the exit code says so (7) and the message
+/// names it.
+fn orphaned_nsg(nsg_id: &str, nsg_name: &str, cause: &Error) -> Error {
+    Error::partial_mutation(format!(
+        "the network security group {nsg_name} was created but could not be finished"
+    ))
+    .with_context(format!(
+        "{}. The group exists as {nsg_id} and is tagged `oci-free:managed=created`.",
+        cause.message()
+    ))
+    .with_remediation(
+        "re-run the same command: the create carries an idempotency token, so it reuses this \
+         group rather than making a second one",
+    )
 }
 
 /// Create the per-instance managed NSG.
