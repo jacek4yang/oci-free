@@ -1,0 +1,17 @@
+{
+  "id": "ocid1.bootvolume.oc1.iad.abuwcljrexamplebootvolume1",
+  "compartmentId": "ocid1.tenancy.oc1..aaaaaaaaexampletenancyid7xk3q7a",
+  "availabilityDomain": "Uocm:US-ASHBURN-AD-1",
+  "displayName": "free-arm-1 (Boot Volume)",
+  "sizeInGBs": 50,
+  "sizeInMBs": 51200,
+  "lifecycleState": "AVAILABLE",
+  "timeCreated": "2026-02-01T09:15:00.000Z",
+  "imageId": "ocid1.image.oc1.iad.aaaaaaaaexampleimage1",
+  "vpusPerGB": 10,
+  "isAutoTuneEnabled": false,
+  "freeformTags": {
+    "oci-free:managed": "created",
+    "oci-free:role": "boot-volume"
+  }
+}

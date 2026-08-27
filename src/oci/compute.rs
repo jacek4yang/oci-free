@@ -204,7 +204,123 @@ pub struct VnicAttachment {
     pub lifecycle_state: String,
 }
 
-/// Read-only compute operations.
+// ---------------------------------------------------------------------------
+// Write request bodies
+// ---------------------------------------------------------------------------
+
+/// The OCPU/memory configuration sent with a flexible-shape launch.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchShapeConfig {
+    pub ocpus: f64,
+    pub memory_in_g_bs: f64,
+}
+
+/// `InstanceSourceViaImageDetails`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchSourceDetails {
+    /// Always `image`; oci-free never launches from a boot volume clone.
+    pub source_type: String,
+    pub image_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub boot_volume_size_in_g_bs: Option<i64>,
+}
+
+impl LaunchSourceDetails {
+    #[must_use]
+    pub fn from_image(image_id: impl Into<String>, boot_volume_gb: Option<i64>) -> Self {
+        Self {
+            source_type: "image".to_owned(),
+            image_id: image_id.into(),
+            boot_volume_size_in_g_bs: boot_volume_gb,
+        }
+    }
+}
+
+/// `CreateVnicDetails` as sent with a launch.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchVnicDetails {
+    pub subnet_id: String,
+    pub assign_public_ip: bool,
+    /// The instance's managed NSG, attached at launch so the instance is never
+    /// briefly exposed with only the subnet's Security List governing it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub nsg_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hostname_label: Option<String>,
+}
+
+/// `LaunchInstanceDetails`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchInstanceDetails {
+    pub availability_domain: String,
+    pub compartment_id: String,
+    pub shape: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shape_config: Option<LaunchShapeConfig>,
+    pub display_name: String,
+    pub source_details: LaunchSourceDetails,
+    pub create_vnic_details: LaunchVnicDetails,
+    /// Instance metadata. Carries `ssh_authorized_keys` and nothing else, so a
+    /// cloud-init script cannot be smuggled in by accident.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub metadata: std::collections::BTreeMap<String, String>,
+    pub freeform_tags: std::collections::BTreeMap<String, String>,
+}
+
+/// A lifecycle action OCI accepts on an instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstanceAction {
+    Start,
+    /// Graceful shutdown, which OCI calls SOFTSTOP.
+    SoftStop,
+    /// Immediate power off.
+    Stop,
+    /// Graceful restart, which OCI calls SOFTRESET.
+    SoftReset,
+    /// Immediate power cycle.
+    Reset,
+}
+
+impl InstanceAction {
+    /// The value OCI expects in the `action` query parameter.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Start => "START",
+            Self::SoftStop => "SOFTSTOP",
+            Self::Stop => "STOP",
+            Self::SoftReset => "SOFTRESET",
+            Self::Reset => "RESET",
+        }
+    }
+
+    /// The lifecycle state this action drives the instance towards.
+    #[must_use]
+    pub fn target_state(self) -> &'static str {
+        match self {
+            Self::Start | Self::SoftReset | Self::Reset => "RUNNING",
+            Self::SoftStop | Self::Stop => "STOPPED",
+        }
+    }
+
+    /// States from which this action is meaningful.
+    #[must_use]
+    pub fn valid_from(self) -> &'static [&'static str] {
+        match self {
+            Self::Start => &["STOPPED"],
+            Self::SoftStop | Self::Stop => &["RUNNING"],
+            Self::SoftReset | Self::Reset => &["RUNNING"],
+        }
+    }
+}
+
+/// Read and write compute operations.
 #[derive(Debug)]
 pub struct ComputeApi<'a> {
     client: &'a OciClient,
@@ -301,6 +417,83 @@ impl<'a> ComputeApi<'a> {
         }
         self.client
             .list_all(Service::Core, &path, "ListVnicAttachments")
+            .await
+    }
+
+    /// Fetch a single image.
+    pub async fn get_image(&self, image_id: &str) -> Result<Image> {
+        let path = format!("/images/{}", encode_path_segment(image_id));
+        Ok(self
+            .client
+            .get_json::<Image>(Service::Core, &path, "GetImage")
+            .await?
+            .body)
+    }
+
+    /// Launch an instance.
+    ///
+    /// `retry_token` is mandatory rather than optional. A launch replayed after
+    /// a lost response would create a second billable instance, and the token
+    /// is what makes OCI collapse the duplicate.
+    pub async fn launch_instance(
+        &self,
+        details: &LaunchInstanceDetails,
+        retry_token: &str,
+    ) -> Result<Instance> {
+        Ok(self
+            .client
+            .post_json::<_, Instance>(
+                Service::Core,
+                "/instances",
+                details,
+                Some(retry_token),
+                "LaunchInstance",
+            )
+            .await?
+            .body)
+    }
+
+    /// Run a lifecycle action on an instance.
+    pub async fn instance_action(
+        &self,
+        instance_id: &str,
+        action: InstanceAction,
+        retry_token: &str,
+    ) -> Result<Instance> {
+        let path = format!(
+            "/instances/{}?action={}",
+            encode_path_segment(instance_id),
+            encode_query_value(action.as_str())
+        );
+        Ok(self
+            .client
+            .post_json::<_, Instance>(
+                Service::Core,
+                &path,
+                &serde_json::Value::Null,
+                Some(retry_token),
+                "InstanceAction",
+            )
+            .await?
+            .body)
+    }
+
+    /// Terminate an instance.
+    ///
+    /// `preserve_boot_volume` is passed explicitly on every call: OCI's default
+    /// differs from what a user expects, and a silently retained boot volume
+    /// keeps consuming the Always Free storage allowance.
+    pub async fn terminate_instance(
+        &self,
+        instance_id: &str,
+        preserve_boot_volume: bool,
+    ) -> Result<()> {
+        let path = format!(
+            "/instances/{}?preserveBootVolume={preserve_boot_volume}",
+            encode_path_segment(instance_id)
+        );
+        self.client
+            .delete(Service::Core, &path, "TerminateInstance")
             .await
     }
 }

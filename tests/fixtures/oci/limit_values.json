@@ -1,0 +1,21 @@
+[
+  {
+    "name": "standard-a1-core-count",
+    "scopeType": "AD",
+    "availabilityDomain": "Uocm:US-ASHBURN-AD-1",
+    "value": 4
+  },
+  {
+    "name": "standard-a1-memory-count",
+    "scopeType": "AD",
+    "availabilityDomain": "Uocm:US-ASHBURN-AD-1",
+    "value": 24
+  },
+  {
+    "name": "vm-standard-e2-micro-count",
+    "scopeType": "AD",
+    "availabilityDomain": "Uocm:US-ASHBURN-AD-1",
+    "value": 2
+  },
+  { "name": "vcn-count", "scopeType": "REGION", "value": 2 }
+]

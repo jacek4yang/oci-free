@@ -1,0 +1,14 @@
+{
+  "groupBy": ["service"],
+  "items": [
+    {
+      "timeUsageStarted": "2026-08-01T00:00:00Z",
+      "timeUsageEnded": "2026-09-01T00:00:00Z",
+      "computedAmount": 0.0,
+      "computedQuantity": 1464.0,
+      "currency": "USD",
+      "service": "COMPUTE",
+      "unit": "OCPU_HOURS"
+    }
+  ]
+}

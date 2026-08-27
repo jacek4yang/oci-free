@@ -1,0 +1,5 @@
+[
+  { "name": "compute", "description": "Compute" },
+  { "name": "vcn", "description": "Virtual Cloud Network" },
+  { "name": "block-storage", "description": "Block Volume" }
+]

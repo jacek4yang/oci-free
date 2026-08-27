@@ -1,0 +1,33 @@
+[
+  {
+    "name": "standard-a1-core-count",
+    "serviceName": "compute",
+    "description": "Cores for Standard.A1 based VM and BM instances",
+    "scopeType": "AD",
+    "areQuotasSupported": true,
+    "isResourceAvailabilitySupported": true,
+    "isDeprecated": false,
+    "isEligibleForLimitIncrease": false
+  },
+  {
+    "name": "standard-a1-memory-count",
+    "serviceName": "compute",
+    "description": "Memory (GB) for Standard.A1 based VM and BM instances",
+    "scopeType": "AD",
+    "isResourceAvailabilitySupported": true
+  },
+  {
+    "name": "vm-standard-e2-micro-count",
+    "serviceName": "compute",
+    "description": "Micro VM instances",
+    "scopeType": "AD",
+    "isResourceAvailabilitySupported": true
+  },
+  {
+    "name": "vcn-count",
+    "serviceName": "vcn",
+    "description": "Virtual cloud networks",
+    "scopeType": "REGION",
+    "isResourceAvailabilitySupported": false
+  }
+]

@@ -1,0 +1,32 @@
+{
+  "groupBy": ["service"],
+  "items": [
+    {
+      "timeUsageStarted": "2026-08-01T00:00:00Z",
+      "timeUsageEnded": "2026-09-01T00:00:00Z",
+      "computedAmount": 0.0,
+      "computedQuantity": 1464.0,
+      "currency": "USD",
+      "service": "COMPUTE",
+      "unit": "OCPU_HOURS"
+    },
+    {
+      "timeUsageStarted": "2026-08-01T00:00:00Z",
+      "timeUsageEnded": "2026-09-01T00:00:00Z",
+      "computedAmount": 2.55,
+      "computedQuantity": 100.0,
+      "currency": "USD",
+      "service": "BLOCK_STORAGE",
+      "unit": "GB_MONTHS"
+    },
+    {
+      "timeUsageStarted": "2026-08-01T00:00:00Z",
+      "timeUsageEnded": "2026-09-01T00:00:00Z",
+      "computedAmount": 0.92,
+      "computedQuantity": 12.0,
+      "currency": "USD",
+      "service": "OBJECT_STORAGE",
+      "unit": "GB_MONTHS"
+    }
+  ]
+}
