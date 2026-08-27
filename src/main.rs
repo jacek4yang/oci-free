@@ -1,17 +1,73 @@
 mod cli;
 
+use std::process::ExitCode;
+
 use anyhow::Result;
 use clap::Parser;
 use cli::{AccountCommand, Cli, Command, FreeCommand, PolicyCommand, VmCommand, VmNetCommand};
+use oci_free::{commands::doctor, config::Environment};
 use serde_json::json;
 
-fn main() -> Result<()> {
+fn main() -> ExitCode {
     let cli = Cli::parse();
-    dispatch(cli)
+    match dispatch(&cli) {
+        Ok(code) => code,
+        Err(error) => {
+            eprintln!("error: {error:#}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
-fn dispatch(cli: Cli) -> Result<()> {
-    let action = match cli.command {
+fn dispatch(cli: &Cli) -> Result<ExitCode> {
+    match &cli.command {
+        Command::Doctor => run_doctor(cli),
+        other => {
+            scaffold(cli, &describe(other));
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+fn run_doctor(cli: &Cli) -> Result<ExitCode> {
+    let report = doctor::run(&Environment::from_process(), &cli.config_options());
+
+    if cli.json {
+        println!("{}", doctor::render_json(&report)?);
+    } else {
+        print!("{}", doctor::render_human(&report));
+    }
+
+    Ok(if report.is_healthy() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
+}
+
+/// Placeholder output for commands that still need the OCI transport layer.
+fn scaffold(cli: &Cli, action: &str) {
+    const MESSAGE: &str =
+        "OCI transport is not implemented yet. See CLAUDE.md for the implementation contract.";
+
+    if cli.json {
+        let payload = json!({
+            "status": "scaffold",
+            "action": action,
+            "message": MESSAGE,
+        });
+        match serde_json::to_string_pretty(&payload) {
+            Ok(rendered) => println!("{rendered}"),
+            Err(error) => eprintln!("error: {error}"),
+        }
+    } else {
+        println!("oci-free scaffold: {action}");
+        println!("{MESSAGE}");
+    }
+}
+
+fn describe(command: &Command) -> String {
+    match command {
         Command::Status => "status".to_owned(),
         Command::Doctor => "doctor".to_owned(),
         Command::Cost => "cost".to_owned(),
@@ -42,29 +98,11 @@ fn dispatch(cli: Cli) -> Result<()> {
                 VmNetCommand::Show => format!("vm net {instance} show"),
                 VmNetCommand::Audit => format!("vm net {instance} audit"),
                 VmNetCommand::Open { rule, source } => {
-                    let source = source.unwrap_or_else(|| "interactive".to_owned());
+                    let source = source.as_deref().unwrap_or("interactive");
                     format!("vm net {instance} open {rule} source={source}")
                 }
                 VmNetCommand::Close { rule } => format!("vm net {instance} close {rule}"),
             },
         },
-    };
-
-    if cli.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({
-                "status": "scaffold",
-                "action": action,
-                "message": "OCI transport is not implemented yet. See CLAUDE.md for the implementation contract."
-            }))?
-        );
-    } else {
-        println!("oci-free scaffold: {action}");
-        println!(
-            "OCI transport is not implemented yet. See CLAUDE.md for the implementation contract."
-        );
     }
-
-    Ok(())
 }
