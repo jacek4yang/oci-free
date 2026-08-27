@@ -183,8 +183,9 @@ The image is the newest compatible platform image from the current catalogue.
 The plan is shown and confirmed before anything is created. `--yes` accepts it
 non-interactively; there is no way to reach a write without an approved plan.
 
-`--ssh-source` accepts a CIDR, or `none` to leave SSH closed. It is never
-defaulted: a non-interactive run without it is an error, not an open port.
+`--ssh-source` accepts a CIDR, `myip`, or `none` to leave SSH closed. It is
+never defaulted: a non-interactive run without it is an error, not an open
+port.
 
 ### `oci-free vm delete <instance>`
 
@@ -198,6 +199,10 @@ a non-interactive run must pass `--delete-boot-volume` or `--keep-boot-volume`.
 `--delete-nsg` also removes the instance's managed NSG. Only resources oci-free
 created are ever deleted; a shared subnet, or an NSG somebody else made, is
 reported as untouched.
+
+The plan also states what happens to the public IP: an ephemeral address is
+released with the instance, while a **reserved** one survives and keeps
+consuming the Always Free reserved-IP allowance.
 
 ### `oci-free vm start | stop | reboot <instance>`
 
@@ -247,8 +252,17 @@ warning severity or above.
 Adds an ingress rule to this instance's own managed NSG, creating and attaching
 one on first use. Subnet Security Lists are never modified.
 
-`--source` is required in a non-interactive run. Interactively you choose a
-specific range, every IPv4 address (with a second confirmation), or cancel.
+`--source` is required in a non-interactive run. It accepts a CIDR, a bare
+address (treated as a `/32`), or `myip` to look up this machine's own public
+address.
+
+Interactively you choose: your own address, a range you type, every IPv4 address
+(behind a second confirmation), or cancel.
+
+`myip` contacts a third-party echo service — OCI has no endpoint that reports
+the caller's address — and the detected value is shown for confirmation before
+it becomes a rule. The endpoint is named in the prompt. Nothing looks your
+address up unless you ask for it.
 
 ### `oci-free vm net <instance> close PORT/PROTOCOL`
 

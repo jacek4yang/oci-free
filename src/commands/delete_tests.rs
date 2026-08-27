@@ -427,6 +427,28 @@ async fn an_instance_that_is_already_gone_verifies_as_terminated() {
     assert!(result.verified);
 }
 
+/// An ephemeral public IP goes with the instance; a reserved one does not. The
+/// plan must distinguish them rather than implying both disappear.
+#[tokio::test]
+async fn the_public_ips_fate_is_stated_in_the_plan() {
+    let mock = scenario(&[MANAGED_NSG]).start().await;
+    let (plan, _) = run(
+        &context(&mock),
+        "free-arm-1",
+        request(BootVolumePolicy::Delete, false),
+    )
+    .await
+    .expect("delete succeeds");
+
+    let rendered = plan.render_human();
+    assert!(rendered.contains("203.0.113.17"));
+    assert!(rendered.contains("released with the instance if it is ephemeral"));
+    assert!(
+        rendered.contains("reserved public IP is not released"),
+        "the plan must warn that a reserved IP survives termination"
+    );
+}
+
 #[test]
 fn the_boot_volume_flags_map_onto_a_policy_only_when_unambiguous() {
     assert_eq!(boot_policy(true, false), Some(BootVolumePolicy::Keep));

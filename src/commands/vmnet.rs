@@ -19,6 +19,7 @@ use crate::{
     commands::{
         context::CommandContext,
         discovery::{InstanceNetwork, load_network, resolve_instance},
+        myip,
     },
     domain::{
         audit::{AuditReport, Finding, Severity, audit},
@@ -102,9 +103,22 @@ pub enum SourceChoice {
     AnyIpv4,
 }
 
+/// The literal `--source` value meaning "look up my own public address".
+pub const SOURCE_MYIP: &str = "myip";
+
 impl SourceChoice {
     /// Parse a `--source` value.
+    ///
+    /// `myip` is handled by the caller, which has to make a network lookup and
+    /// confirm the result, so reaching here with it is a bug rather than
+    /// something to silently ignore.
     pub fn parse(value: &str) -> Result<Self> {
+        if value.eq_ignore_ascii_case(SOURCE_MYIP) {
+            return Err(Error::invalid_input(
+                "`myip` must be resolved before it can be used as a source",
+            )
+            .with_context("this is an internal error; please report it"));
+        }
         let cidr: Cidr = value
             .parse()
             .map_err(|error: crate::domain::cidr::ParseCidrError| {
@@ -308,7 +322,7 @@ pub async fn open(
     let instance = resolve_instance(context, reference).await?;
     let network = load_network(context, &instance).await;
 
-    let source = choose_source(context, source, rule)?;
+    let source = choose_source(context, source, rule).await?;
     let plan = plan_open(context, &instance, &network, rule, &source);
     let approval = confirm_plan(context, &plan, assume_yes)?;
 
@@ -652,24 +666,32 @@ async fn remove_rules(
 }
 
 /// Ask for, or validate, the source of an `open`.
-fn choose_source(
+pub async fn choose_source(
     context: &CommandContext,
     supplied: Option<&str>,
     rule: PortRule,
 ) -> Result<SourceChoice> {
     if let Some(value) = supplied {
+        if value.eq_ignore_ascii_case(SOURCE_MYIP) {
+            return resolve_my_address(context.is_interactive()).await;
+        }
         return SourceChoice::parse(value);
     }
     if !context.is_interactive() {
         return Err(interactive::not_interactive(
             "the ingress source",
-            "--source <CIDR>, for example --source 198.51.100.7/32 or --source 0.0.0.0/0",
+            "--source <CIDR>, for example --source 198.51.100.7/32, --source myip, or --source \
+             0.0.0.0/0",
         ));
     }
 
     let options = vec![
+        format!(
+            "just this machine - look up my public address via {}",
+            myip::ECHO_ENDPOINT
+        ),
         "a specific address or range I will type".to_owned(),
-        format!("every IPv4 address (0.0.0.0/0) — anyone can reach {rule}"),
+        format!("every IPv4 address (0.0.0.0/0) - anyone can reach {rule}"),
         "cancel".to_owned(),
     ];
     let choice = interactive::select(
@@ -680,11 +702,12 @@ fn choose_source(
     )?;
 
     match choice {
-        0 => {
+        0 => resolve_my_address(true).await,
+        1 => {
             let value = interactive::input("Source address or CIDR block", None, "--source")?;
             SourceChoice::parse(&value)
         }
-        1 => {
+        2 => {
             if !interactive::confirm(
                 "This will let every host on the internet reach the port. Continue?",
             )? {
@@ -694,6 +717,26 @@ fn choose_source(
         }
         _ => Err(cancelled()),
     }
+}
+
+/// Look up this machine's public address, and confirm it before it is used.
+///
+/// The confirmation is not ceremony: a mistaken or hostile echo service would
+/// otherwise open the port to somebody else's address, and showing the value is
+/// what makes that visible. In a non-interactive run there is nobody to show it
+/// to, so the address is used as-is - the user asked for `myip` explicitly,
+/// which is the acceptance.
+pub async fn resolve_my_address(interactive: bool) -> Result<SourceChoice> {
+    let cidr = myip::detect().await?;
+    if interactive
+        && !interactive::confirm(&format!(
+            "{} reports your address as {cidr}. Use it?",
+            myip::ECHO_ENDPOINT
+        ))?
+    {
+        return Err(cancelled());
+    }
+    Ok(SourceChoice::Cidr(cidr))
 }
 
 fn cancelled() -> Error {

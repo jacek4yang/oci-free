@@ -1,9 +1,9 @@
 # Installation
 
-> `oci-free` is an early development preview. Configuration loading, OCI request
-> signing, and `oci-free doctor` work; most OCI management commands still return
-> scaffold placeholders. Installing it gives you a working binary, not a
-> complete OCI management tool.
+> The v1 command surface is implemented and covered by tests, but has not yet
+> been validated against a live OCI tenancy — see
+> [`LIVE-VALIDATION.md`](LIVE-VALIDATION.md). Treat a prerelease build
+> accordingly, especially for commands that create or delete resources.
 
 `oci-free` is a single native executable. It does not need Rust, Cargo, Python,
 Node.js, Java, or the official OCI CLI, either to install or to run.

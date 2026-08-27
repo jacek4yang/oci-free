@@ -77,19 +77,19 @@ Release infrastructure is testable before any tag exists.
 
 ## Versioning and prerelease policy
 
-`oci-free` is an early development preview. Most OCI management commands still
-return scaffold placeholders, so releases must not imply a finished product.
+The v1 command surface is implemented and covered by tests, but it has not yet
+been validated against a live OCI tenancy. Releases must not imply otherwise.
 
 | Tag | Meaning | Use while… |
 | --- | --- | --- |
-| `v0.1.0-preview.1` | Preview | commands are still scaffolded — **this is where the project is today** |
-| `v0.1.0-rc.1` | Release candidate | the read and write OCI workflows exist and have been exercised against a real Free Tier tenancy |
-| `v0.1.0` | Stable | the criteria in `CLAUDE.md` under "Definition of the first useful release" are met |
+| `v1.0.0-rc.1` | Release candidate | the commands exist and the offline suite is green, but the live checklist has not been completed — **this is where the project is today** |
+| `v1.0.0` | Stable | [`LIVE-VALIDATION.md`](LIVE-VALIDATION.md) has been worked through against a real Free Tier tenancy and the results recorded |
 
 cargo-dist marks any tag with a prerelease suffix as a GitHub prerelease
-automatically, which keeps it out of `releases/latest`. **Until the CLI stops
-returning scaffold output, tag only prereleases.** A stable tag would make the
-`latest` installer URLs point at a preview binary.
+automatically, which keeps it out of `releases/latest`. **Do not cut a stable
+tag before the live checklist is complete.** A stable tag makes the `latest`
+installer URLs point at that build, and an unvalidated binary that can create
+and delete cloud resources is not something to put behind `latest`.
 
 ## Cutting a release
 

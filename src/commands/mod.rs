@@ -7,6 +7,7 @@ pub mod delete;
 pub mod discovery;
 pub mod doctor;
 pub mod free;
+pub mod myip;
 pub mod network_setup;
 pub mod policy;
 pub mod ssh;

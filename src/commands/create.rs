@@ -207,7 +207,7 @@ async fn decide(context: &CommandContext, request: &CreateRequest) -> Result<Dec
     };
 
     let ssh_key = read_ssh_key(request.ssh_key.as_deref())?;
-    let ssh_source = choose_ssh_source(context, request)?;
+    let ssh_source = choose_ssh_source(context, request).await?;
     let network = network_setup::plan(context).await?;
 
     Ok(Decision {
@@ -380,22 +380,32 @@ fn read_ssh_key(path: Option<&Path>) -> Result<Option<String>> {
 }
 
 /// Decide where SSH may be reached from.
-fn choose_ssh_source(
+async fn choose_ssh_source(
     context: &CommandContext,
     request: &CreateRequest,
 ) -> Result<Option<SourceChoice>> {
     match request.ssh_source.as_deref() {
         Some("none") => Ok(None),
+        Some(value) if value.eq_ignore_ascii_case(vmnet::SOURCE_MYIP) => {
+            vmnet::resolve_my_address(context.is_interactive())
+                .await
+                .map(Some)
+        }
         Some(value) => SourceChoice::parse(value).map(Some),
+        // No key means no way to log in, so there is nothing to open.
         None if request.ssh_key.is_none() => Ok(None),
         None if !context.is_interactive() => Err(interactive::not_interactive(
             "the SSH ingress source",
-            "--ssh-source <CIDR>, or --ssh-source none to leave SSH closed",
+            "--ssh-source <CIDR>, --ssh-source myip, or --ssh-source none to leave SSH closed",
         )),
         None => {
             let options = vec![
+                format!(
+                    "just this machine - look up my public address via {}",
+                    crate::commands::myip::ECHO_ENDPOINT
+                ),
                 "a specific address or range I will type".to_owned(),
-                "every IPv4 address (0.0.0.0/0) — anyone can attempt to log in".to_owned(),
+                "every IPv4 address (0.0.0.0/0) - anyone can attempt to log in".to_owned(),
                 "leave SSH closed for now".to_owned(),
             ];
             match interactive::select(
@@ -404,12 +414,13 @@ fn choose_ssh_source(
                 0,
                 "--ssh-source",
             )? {
-                0 => {
+                0 => vmnet::resolve_my_address(true).await.map(Some),
+                1 => {
                     let value =
                         interactive::input("Source address or CIDR block", None, "--ssh-source")?;
                     SourceChoice::parse(&value).map(Some)
                 }
-                1 => {
+                2 => {
                     if interactive::confirm(
                         "This lets every host on the internet attempt to log in. Continue?",
                     )? {

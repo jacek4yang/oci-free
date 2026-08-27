@@ -273,6 +273,27 @@ fn build_plan(
         );
     }
 
+    // The public IP is the resource users most often forget. An ephemeral one
+    // is released with the instance and costs nothing; a reserved one survives
+    // and keeps consuming the Always Free reserved-IP allowance, so the two
+    // cases are stated separately rather than glossed as "the IP goes away".
+    if let Some(vnic) = &network.vnic
+        && let Some(address) = vnic.public_ip.as_deref().filter(|ip| !ip.trim().is_empty())
+    {
+        plan.add_change(
+            PlannedChange::new(
+                ChangeKind::Detach,
+                "public IP",
+                address,
+                "released with the instance if it is ephemeral",
+            )
+            .with_note(
+                "a reserved public IP is not released by terminating an instance; check Networking \
+                 -> Reserved public IPs in the Console if you allocated one",
+            ),
+        );
+    }
+
     // Shared resources are shown so the plan is a complete picture of the
     // topology, and marked as untouched so nobody expects them to go.
     if let Some(subnet) = &network.subnet {

@@ -85,8 +85,8 @@ which fields were overridden.
 
 ## Checking the setup
 
-`oci-free doctor` validates everything that can be verified locally and exits
-non-zero when the configuration is not usable:
+`oci-free doctor` validates the configuration locally, then makes read-only
+calls to OCI, and exits non-zero when the setup is not usable:
 
 ```console
 $ oci-free doctor
@@ -95,8 +95,18 @@ $ oci-free doctor
 [     ok] Private key: loaded an RSA private key from /home/me/.oci/oci_api_key.pem
 [     ok] Key fingerprint: the private key matches the configured fingerprint 8d:54:...:8c
 [     ok] Request signing: signed and verified a test request as ocid1.tenancy.oc1..…xk3q7a/ocid1.user.oc1..…4m2p8z/8d:54:...:8c
-[skipped] Live OCI verification: not implemented yet; doctor currently validates local configuration only
+[     ok] Signed authentication: OCI accepted the request signature
+[     ok] Tenancy access: read tenancy ocid1.tenancy.oc1..…xk3q7a (example-tenancy)
+[     ok] Home region: this profile targets the home region us-ashburn-1
+[     ok] Availability domains: 3 domain(s) available: Uocm:US-ASHBURN-AD-1, ...
+[     ok] Compute read permission: listed 2 instance(s)
+[     ok] Networking read permission: listed 1 VCN(s)
+[warning] Service limits permission: service limits are unavailable: ...
+          next: optional: `allow group <g> to read limits in tenancy` makes `account limits` work
 ```
+
+A `warning` on an optional capability does not fail the run. Only a `failed`
+line does, and each one names the next corrective action.
 
 The fingerprint check is the important one: it derives the fingerprint from the
 private key and compares it with the configured value, which catches the common

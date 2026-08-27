@@ -38,6 +38,19 @@ would silently affect every other instance in the subnet, which is not a thing a
 per-instance command should be able to do. When a Security List is what is
 granting access, the audit says so and tells you to change it in the Console.
 
+### Choosing a source
+
+`--source` accepts a CIDR, a bare address (treated as a `/32`), or `myip`.
+
+`myip` looks up this machine's public address. OCI has no endpoint that reports
+the caller's address, so this contacts a third-party echo service — named in the
+prompt — and the result is **shown for confirmation before it becomes a rule**.
+That confirmation is not ceremony: a mistaken or hostile echo service would
+otherwise open the port to somebody else's address.
+
+Nothing looks your address up implicitly. Only an explicit interactive choice or
+`--source myip` reaches that code.
+
 ## Closing a port is not the same as removing a rule
 
 ```console
