@@ -28,17 +28,55 @@ eula = false
 anyhow = "1.0"
 base64 = "0.23"
 clap = { version = "4.5", features = ["derive"] }
+# Interactive prompts only; no full-screen TUI (see CLAUDE.md).
+dialoguer = { version = "0.12", default-features = false }
 httpdate = "1.0"
 md-5 = "0.10"
+# rustls only: the binary must not depend on a system OpenSSL.
+reqwest = { version = "0.13", default-features = false, features = [
+    "rustls-no-provider",
+    "rustls-native-certs",
+    "http2",
+    "charset",
+    "json",
+] }
+# rustls with the `ring` provider. reqwest's default `rustls` feature selects
+# aws-lc-rs, which needs cmake and a C toolchain on every release runner; ring
+# keeps all five target builds self-contained. The provider is installed
+# explicitly at client construction because `rustls-no-provider` leaves the
+# process default unset.
+rustls = { version = "0.23", default-features = false, features = [
+    "ring",
+    "std",
+    "tls12",
+    "logging",
+] }
 rsa = "0.9"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = { version = "0.10", features = ["oid"] }
 thiserror = "2.0"
+# Retry jitter only. Not used for anything security-sensitive.
+rand = { version = "0.10", default-features = false, features = ["thread_rng"] }
+# RFC 3339 timestamps for the usage/cost API request window.
+time = { version = "0.3", default-features = false, features = [
+    "std",
+    "formatting",
+    "parsing",
+    "macros",
+] }
+tokio = { version = "1", default-features = false, features = [
+    "rt-multi-thread",
+    "macros",
+    "time",
+    "signal",
+    "process",
+] }
 url = "2.5"
 
 [dev-dependencies]
 tempfile = "3"
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "time", "net", "io-util"] }
 
 [lints.rust]
 unsafe_code = "forbid"
