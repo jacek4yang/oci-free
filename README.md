@@ -75,9 +75,4 @@ The repository includes `cargo-dist` configuration so tagged releases can eventu
 
 ## License
 
-Licensed under either of:
-
-- Apache License, Version 2.0
-- MIT License
-
-at your option.
+MIT. See [`LICENSE`](LICENSE).
