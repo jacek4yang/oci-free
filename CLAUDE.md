@@ -307,7 +307,7 @@ Prefer mature, focused crates. Keep the binary native and self-contained. Expect
 - `serde` / `serde_json` for protocol models;
 - `reqwest` with rustls for HTTPS;
 - `tokio` for async I/O;
-- RustCrypto crates for RSA/SHA-256/Base64 signing;
+- `ring` for RSA-SHA256 request signing, and RustCrypto crates for the SHA-256 and MD5 digests OCI's protocol requires;
 - a small terminal prompt crate only when interactive flows need it.
 
 Avoid OpenSSL system dependencies unless there is a strong reason. Avoid Python, Node.js, Java, or the official OCI CLI as runtime dependencies.

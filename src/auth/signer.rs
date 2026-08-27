@@ -1,10 +1,6 @@
 use std::{fmt, time::SystemTime};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use rsa::{
-    pkcs1v15::SigningKey,
-    signature::{SignatureEncoding, Signer as _},
-};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use url::Url;
@@ -215,10 +211,11 @@ impl RequestSigner {
         }
 
         let signing_string = build_signing_string(&signed_names, &headers, &host, &target);
-        let signature = SigningKey::<Sha256>::new(self.key.rsa().clone())
-            .sign(signing_string.as_bytes())
-            .to_bytes()
-            .to_vec();
+        let signature = self.key.sign(signing_string.as_bytes()).map_err(|source| {
+            SignerError::SigningFailed {
+                remediation: source.remediation(),
+            }
+        })?;
 
         headers.push((
             "authorization".to_owned(),
@@ -302,6 +299,8 @@ pub enum SignerError {
     InsecureUrl(String),
     #[error("the request URL has no host: {0}")]
     UnsupportedUrl(String),
+    #[error("the request could not be signed with the configured key")]
+    SigningFailed { remediation: String },
 }
 
 impl SignerError {
@@ -316,6 +315,7 @@ impl SignerError {
             Self::InsecureUrl(_) | Self::UnsupportedUrl(_) => {
                 "use an https:// OCI service endpoint".to_owned()
             }
+            Self::SigningFailed { remediation } => remediation.clone(),
         }
     }
 }

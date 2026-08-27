@@ -37,3 +37,23 @@ jobs:
 
       - name: Build
         run: cargo build --locked
+
+  audit:
+    name: Dependency advisories
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      # The shipped binary must carry no known advisory. Anything reachable
+      # only through a dev-dependency is assessed in docs/SECURITY.md; a new
+      # advisory fails the build so the assessment is made deliberately rather
+      # than inherited.
+      - name: Audit
+        run: cargo audit --deny warnings

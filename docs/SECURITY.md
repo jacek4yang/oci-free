@@ -43,58 +43,72 @@ substitute for either; the operating system will still warn on first run. See
 
 ## Dependency advisories
 
-`cargo audit` is run before each handoff. Advisories are recorded here with a
-threat-model assessment rather than silently accepted or suppressed.
+`cargo audit` runs in CI on every pull request and push, and again before each
+handoff. Advisories are recorded here with a threat-model assessment rather
+than silently accepted or suppressed. An advisory is only left open when it
+provably cannot reach a shipped artifact, and the reasoning is written down.
 
-### RUSTSEC-2023-0071 — `rsa` 0.9.10, Marvin attack (medium, 5.9)
+### RUSTSEC-2023-0071 — `rsa`, Marvin attack (medium, 5.9)
 
-**Status: open. No fixed release of the `rsa` crate exists.**
+**Status: resolved. The `rsa` crate is no longer a dependency.**
 
-The advisory describes a timing side-channel in RSA private-key operations. An
-attacker who can submit many chosen inputs for private-key operations *and*
-measure the timing of each response can, over many samples, recover the key.
+The advisory describes a timing side-channel in RSA private-key operations, and
+records no patched version — its stated workaround is to avoid the crate where
+an attacker can observe timing.
 
-How `oci-free` uses the key bounds the exposure:
+How `oci-free` used the key already bounded the exposure: the key only ever
+signed outbound requests, never decrypted; the signed message is a request
+line, host, date, and body digest that `oci-free` constructs itself, so a
+remote party could not choose it; and signing happens locally with only the
+resulting signature transmitted, so no remote party observed the timing. There
+was no remote timing oracle.
 
-- the key is used only to sign outbound requests, never to decrypt;
-- the signed message is a request line, host, date, and body digest that
-  `oci-free` constructs itself, so a remote party cannot choose it;
-- signing happens locally and only the resulting signature is transmitted, so
-  no remote party observes the timing of the operation.
+That analysis made the advisory unlikely to be exploitable here, but "unlikely"
+is a poor foundation for the one component that handles private key material,
+and a stable 1.0 should not inherit a known medium crypto advisory by default.
 
-There is therefore no remote timing oracle. The residual risk is a local
-attacker who can measure this process's timing precisely — an attacker who can
-generally just read the key file directly.
+The signer therefore runs on `ring`'s `RsaKeyPair` (RSASSA-PKCS1-v1_5 over
+SHA-256), which was already in the dependency graph as rustls's crypto
+provider. The migration **removed** a dependency rather than adding one.
 
-Assessment: **not exploitable in this product's threat model, but it does block
-a stable 1.0.0.** Shipping a known medium crypto advisory in a stable release
-should be a deliberate decision, not an inherited default.
+Two capabilities moved into this codebase as a result, both narrow and both
+tested:
 
-Resolution path, in preference order:
+- **PEM decoding.** `ring` parses PKCS#8 and PKCS#1 DER but not the PEM
+  envelope, so `src/auth/key.rs` locates the delimiters and base64-decodes the
+  body. Tests cover CRLF line endings, unwrapped bodies, a truncated block, a
+  mismatched label, and non-base64 content.
+- **SubjectPublicKeyInfo construction.** OCI defines the API key fingerprint as
+  the MD5 digest of the DER `SubjectPublicKeyInfo`, while `ring` exposes the
+  public key as a PKCS#1 `RSAPublicKey`. The SPKI wrapper is rebuilt in
+  `subject_public_key_info`, and pinned by a test against a fingerprint
+  computed independently with OpenSSL. The DER length encoder has its own
+  boundary tests at 127, 128, 255, 256, and 65535 bytes.
 
-1. Migrate the signer to `ring`'s `RsaKeyPair` (RSA PKCS#1 v1.5 SHA-256). Ring
-   is already in the dependency graph via rustls, and is constant-time
-   hardened. Cost: PEM/DER handling and SPKI encoding for the fingerprint move
-   into our code, and the signer is the most safety-critical tested component,
-   so the migration needs its existing conformance vectors kept green.
-2. Adopt a fixed `rsa` release if one appears.
+Compatibility is unchanged and covered by the existing conformance vectors:
+PKCS#8 and PKCS#1 both load, both produce the same fingerprint, both produce
+byte-identical signatures for the same message, and the `Signature` version 1
+header is unchanged. MD5 remains in the tree solely to reproduce OCI's
+fingerprint identifier and is never used as a security primitive.
 
-Note that CLAUDE.md currently specifies RustCrypto for signing, so option 1 is
-a contract change and needs the maintainer's agreement.
+`ring` cannot generate RSA keys. Nothing depends on that: `oci-free config
+init` does not generate keys either, because the OCI Console's "Add API key"
+flow produces the pair, shows the fingerprint, and hands over the private key
+in one step with no local toolchain — see `docs/CONFIGURATION.md`.
 
-### RUSTSEC-2026-0009 — `time` 0.3.45, stack exhaustion (medium, 6.8)
+### `time` — reachable only through a dev-dependency
 
-**Status: does not affect the shipped binary.**
+**Status: does not affect any shipped artifact.**
 
 `time` enters the dependency graph only through `rcgen`, which is a
 dev-dependency used to generate a self-signed certificate for the in-process
-HTTPS test server. `cargo tree --no-dev-dependencies` shows no `time` in the
-release graph, so no released artifact contains the affected code.
+HTTPS test server. `cargo tree --edges normal` — the graph that is actually
+linked into a release binary — contains neither `rcgen` nor `time`, so no
+released artifact contains that code under any advisory affecting it.
 
-The fixed version, 0.3.47, requires Rust 1.88 while this package declares an
-MSRV of 1.85. Raising the MSRV to silence an advisory that cannot reach users
-would be the wrong trade, so the dependency is left as it is and re-checked
-whenever the MSRV moves for another reason.
+This is re-checked whenever the dependency graph changes. The MSRV is not
+raised to move a dev-only dependency: raising it would narrow the toolchains
+contributors can build with to silence something that cannot reach a user.
 
 ## Reporting vulnerabilities
 
