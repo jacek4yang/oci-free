@@ -191,7 +191,13 @@ jobs:
           $exe = Join-Path $binDir 'oci-free.exe'
           if (-not (Test-Path $exe)) { throw "oci-free.exe was not installed to $exe" }
           $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-          if (-not (($machinePath -split ';') -contains $binDir)) {
+          $normalizedBinDir = $binDir -replace '[\\/]+$',''
+          $pathEntries = @(
+            ($machinePath -split ';') |
+              Where-Object { $_ } |
+              ForEach-Object { $_.Trim() -replace '[\\/]+$','' }
+          )
+          if (-not ($pathEntries -contains $normalizedBinDir)) {
             throw "install directory is not on the machine PATH: $machinePath"
           }
           $uninstallKeys = @(
@@ -234,7 +240,13 @@ jobs:
           $binDir = Join-Path $env:ProgramFiles 'oci-free\bin'
           if (Test-Path (Join-Path $binDir 'oci-free.exe')) { throw 'oci-free.exe survived uninstall' }
           $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-          if (($machinePath -split ';') -contains $binDir) {
+          $normalizedBinDir = $binDir -replace '[\\/]+$',''
+          $pathEntries = @(
+            ($machinePath -split ';') |
+              Where-Object { $_ } |
+              ForEach-Object { $_.Trim() -replace '[\\/]+$','' }
+          )
+          if ($pathEntries -contains $normalizedBinDir) {
             throw "uninstall left the install directory on the machine PATH"
           }
           $uninstallKeys = @(
