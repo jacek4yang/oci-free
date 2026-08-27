@@ -90,11 +90,16 @@ mod tests {
                 "check {id}"
             );
         }
-        assert_eq!(
-            status_of(&report, "live_verification").status,
-            CheckStatus::Skipped
+        // The offline phase stands on its own: `run` performs no live checks,
+        // and a clean local report must read as `pass` rather than being
+        // downgraded by checks that have not run yet.
+        assert!(
+            report
+                .checks
+                .iter()
+                .all(|check| !check.id.starts_with("live_")),
+            "`run` must not perform live checks"
         );
-        // Pending live checks must not downgrade an otherwise clean report.
         assert_eq!(report.status, CheckStatus::Pass);
     }
 
@@ -152,7 +157,6 @@ mod tests {
             "private_key",
             "key_fingerprint",
             "request_signing",
-            "live_verification",
         ] {
             assert_eq!(
                 status_of(&report, id).status,
@@ -224,7 +228,7 @@ mod tests {
         let report = fixture.report();
         let json = render_json(&report).expect("report serializes");
 
-        assert!(json.contains("\"schema\": \"oci-free.doctor/v0\""));
+        assert!(json.contains(&format!("\"schema\": \"{}\"", super::SCHEMA)));
         assert!(!json.contains("aaaaaaaaexampletenancyid7xk3q7a"));
         assert!(!json.contains("PRIVATE KEY"));
         assert!(json.contains(FIXTURE_FINGERPRINT));

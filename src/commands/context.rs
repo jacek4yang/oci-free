@@ -14,6 +14,26 @@ use crate::{
     policy::{engine::PolicyEngine, snapshot::PolicySnapshot},
 };
 
+/// How long to wait for OCI to finish an asynchronous operation.
+///
+/// Every wait in this product is bounded: a CLI that hangs is worse than one
+/// that reports a timeout the user can retry. Carried on the context so tests
+/// can drive the same code paths without sleeping for real.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PollSettings {
+    pub interval: std::time::Duration,
+    pub timeout: std::time::Duration,
+}
+
+impl Default for PollSettings {
+    fn default() -> Self {
+        Self {
+            interval: std::time::Duration::from_secs(5),
+            timeout: std::time::Duration::from_secs(300),
+        }
+    }
+}
+
 /// Everything a live command needs.
 pub struct CommandContext {
     config: Config,
@@ -21,6 +41,7 @@ pub struct CommandContext {
     policy: PolicyEngine,
     /// Whether a prompt can reach a human.
     interactive: bool,
+    poll: PollSettings,
 }
 
 impl std::fmt::Debug for CommandContext {
@@ -55,6 +76,7 @@ impl CommandContext {
             client,
             policy,
             interactive: crate::interactive::stdin_is_a_terminal(),
+            poll: PollSettings::default(),
         })
     }
 
@@ -87,6 +109,12 @@ impl CommandContext {
     #[must_use]
     pub fn region(&self) -> &Region {
         &self.config.region
+    }
+
+    /// How long asynchronous operations are waited on.
+    #[must_use]
+    pub fn poll(&self) -> PollSettings {
+        self.poll
     }
 
     /// Whether interactive prompting is possible.
@@ -128,6 +156,7 @@ impl CommandContext {
             config,
             policy: PolicyEngine::new(self.policy.snapshot().clone()),
             interactive: self.interactive,
+            poll: self.poll,
         }
     }
 
@@ -163,6 +192,11 @@ impl CommandContext {
             client,
             policy: PolicyEngine::new(PolicySnapshot::load().expect("snapshot")),
             interactive: false,
+            // Tests exercise the real polling loop, just without the waiting.
+            poll: PollSettings {
+                interval: std::time::Duration::from_millis(1),
+                timeout: std::time::Duration::from_millis(200),
+            },
         }
     }
 }

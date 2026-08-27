@@ -236,7 +236,12 @@ impl PolicyEngine {
     }
 }
 
-fn reason_for(classification: FreeClassification, shape: &str) -> String {
+/// A one-sentence statement of what a classification means for a shape.
+///
+/// Public so `policy explain` can reuse the same wording rather than inventing
+/// a second phrasing of the same verdict.
+#[must_use]
+pub fn reason_for(classification: FreeClassification, shape: &str) -> String {
     match classification {
         FreeClassification::VerifiedAlwaysFree => {
             format!("{shape} is verified Always Free")

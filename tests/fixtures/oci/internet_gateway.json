@@ -5,5 +5,5 @@
   "displayName": "oci-free-internet-gateway",
   "isEnabled": true,
   "lifecycleState": "AVAILABLE",
-  "freeformTags": { "oci-free:managed": "1" }
+  "freeformTags": { "oci-free:managed": "created" }
 }

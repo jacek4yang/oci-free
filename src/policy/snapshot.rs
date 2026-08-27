@@ -31,6 +31,47 @@ pub struct Provenance {
     pub note: String,
 }
 
+/// The OCI service-limit names that correspond to an allowance.
+///
+/// Presentation hints, never policy. A tenancy publishes hundreds of limits;
+/// these names decide which handful `account limits` highlights. A name Oracle
+/// renames simply stops matching, which changes what is shown and never what is
+/// permitted.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct ServiceLimitHints {
+    /// Limits-API service name, for example `compute`.
+    pub service: String,
+    #[serde(default)]
+    pub ocpu: Option<String>,
+    #[serde(default)]
+    pub memory_gb: Option<String>,
+    #[serde(default)]
+    pub instances: Option<String>,
+}
+
+impl ServiceLimitHints {
+    /// Every limit name this allowance refers to.
+    #[must_use]
+    pub fn names(&self) -> Vec<&str> {
+        [
+            self.ocpu.as_deref(),
+            self.memory_gb.as_deref(),
+            self.instances.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+}
+
+/// A network or storage limit worth showing alongside the compute allowances.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct NamedLimit {
+    pub service: String,
+    pub name: String,
+    pub description: String,
+}
+
 /// A pooled Free Tier compute allowance.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct ComputeAllowance {
@@ -46,6 +87,9 @@ pub struct ComputeAllowance {
     /// Instance-count ceiling, when the allowance is expressed that way.
     #[serde(default)]
     pub max_instances: Option<u32>,
+    /// Which OCI service limits correspond to this allowance.
+    #[serde(default)]
+    pub service_limits: Option<ServiceLimitHints>,
 }
 
 impl ComputeAllowance {
@@ -71,6 +115,9 @@ pub struct PolicySnapshot {
     pub assumptions: Vec<String>,
     pub unknown_behaviour: String,
     pub compute_allowances: Vec<ComputeAllowance>,
+    /// Network and storage limits worth surfacing next to compute.
+    #[serde(default)]
+    pub network_limits: Vec<NamedLimit>,
 }
 
 impl PolicySnapshot {
@@ -112,6 +159,38 @@ impl PolicySnapshot {
             "oci-free policy snapshot v{}, verified {}",
             self.schema_version, self.verified_on
         )
+    }
+
+    /// Every Limits-API service this snapshot refers to.
+    #[must_use]
+    pub fn limit_services(&self) -> Vec<&str> {
+        let mut services: Vec<&str> = self
+            .compute_allowances
+            .iter()
+            .filter_map(|allowance| allowance.service_limits.as_ref())
+            .map(|hints| hints.service.as_str())
+            .chain(
+                self.network_limits
+                    .iter()
+                    .map(|limit| limit.service.as_str()),
+            )
+            .collect();
+        services.sort_unstable();
+        services.dedup();
+        services
+    }
+
+    /// Whether a limit name is one the snapshot considers Free Tier relevant.
+    #[must_use]
+    pub fn highlights_limit(&self, service: &str, name: &str) -> bool {
+        self.compute_allowances
+            .iter()
+            .filter_map(|allowance| allowance.service_limits.as_ref())
+            .any(|hints| hints.service == service && hints.names().contains(&name))
+            || self
+                .network_limits
+                .iter()
+                .any(|limit| limit.service == service && limit.name == name)
     }
 
     /// Every shape the snapshot knows about, keyed by allowance id.
@@ -216,6 +295,40 @@ mod tests {
                 seen.push(lowered);
             }
         }
+    }
+
+    /// The limit hints must resolve to real services and must never be empty
+    /// for the compute allowances, or `account limits` would highlight nothing.
+    #[test]
+    fn limit_hints_cover_the_compute_allowances() {
+        let snapshot = PolicySnapshot::load().expect("snapshot");
+        for allowance in &snapshot.compute_allowances {
+            let hints = allowance
+                .service_limits
+                .as_ref()
+                .unwrap_or_else(|| panic!("{} needs service-limit hints", allowance.id));
+            assert_eq!(hints.service, "compute");
+            assert!(
+                !hints.names().is_empty(),
+                "{} names no limit at all",
+                allowance.id
+            );
+        }
+
+        assert!(snapshot.highlights_limit("compute", "standard-a1-core-count"));
+        assert!(snapshot.highlights_limit("vcn", "vcn-count"));
+        assert!(!snapshot.highlights_limit("compute", "vcn-count"));
+        assert!(!snapshot.highlights_limit("compute", "some-unrelated-limit"));
+    }
+
+    #[test]
+    fn limit_services_are_deduplicated() {
+        let snapshot = PolicySnapshot::load().expect("snapshot");
+        let services = snapshot.limit_services();
+        let mut sorted = services.clone();
+        sorted.dedup();
+        assert_eq!(services, sorted);
+        assert!(services.contains(&"compute"));
     }
 
     #[test]

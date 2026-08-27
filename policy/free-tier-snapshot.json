@@ -11,12 +11,18 @@
       "source": "OCI Core Services API, Shape.billingType",
       "url": "https://docs.oracle.com/en-us/iaas/api/#/en/iaas/20160918/Shape",
       "note": "Live per-shape billing classification. Preferred over this snapshot wherever OCI returns it."
+    },
+    {
+      "source": "OCI Limits API, ListLimitValues",
+      "url": "https://docs.oracle.com/en-us/iaas/api/#/en/limits/20181025/LimitValueSummary/ListLimitValues",
+      "note": "Source of the live limit values. The limit names recorded below are display hints only, used to decide which of a tenancy's many limits to highlight."
     }
   ],
   "assumptions": [
     "These allowances are tenancy-wide, not per-region.",
     "A stopped instance still occupies its shape allocation; only termination releases it.",
-    "Allowances published by Oracle can change without notice, which is why this file records a verification date and why live OCI evidence takes precedence."
+    "Allowances published by Oracle can change without notice, which is why this file records a verification date and why live OCI evidence takes precedence.",
+    "The `service_limits` and `network_limits` entries are presentation hints, never billing policy. A name Oracle renames or removes simply stops matching, which changes what is highlighted and never what is permitted."
   ],
   "unknown_behaviour": "Any resource class absent from `compute_allowances` is classified Unknown and therefore blocked in strict mode. This file never widens eligibility beyond what it explicitly lists.",
   "compute_allowances": [
@@ -26,7 +32,13 @@
       "description": "Ampere A1 flexible shape, pooled across all instances in the tenancy.",
       "max_ocpus": 4.0,
       "max_memory_gb": 24.0,
-      "max_instances": null
+      "max_instances": null,
+      "service_limits": {
+        "service": "compute",
+        "ocpu": "standard-a1-core-count",
+        "memory_gb": "standard-a1-memory-count",
+        "instances": null
+      }
     },
     {
       "id": "amd-micro",
@@ -34,7 +46,23 @@
       "description": "AMD micro shape, limited by instance count rather than cores.",
       "max_ocpus": 2.0,
       "max_memory_gb": 2.0,
-      "max_instances": 2
+      "max_instances": 2,
+      "service_limits": {
+        "service": "compute",
+        "ocpu": null,
+        "memory_gb": null,
+        "instances": "vm-standard-e2-micro-count"
+      }
     }
+  ],
+  "network_limits": [
+    { "service": "vcn", "name": "vcn-count", "description": "Virtual cloud networks" },
+    { "service": "vcn", "name": "subnet-count", "description": "Subnets" },
+    { "service": "vcn", "name": "internet-gateway-count", "description": "Internet gateways" },
+    { "service": "vcn", "name": "network-security-group-count", "description": "Network security groups" },
+    { "service": "vcn", "name": "security-list-count", "description": "Security lists" },
+    { "service": "vcn", "name": "route-table-count", "description": "Route tables" },
+    { "service": "block-storage", "name": "total-storage-gb", "description": "Block and boot volume storage" },
+    { "service": "block-storage", "name": "volume-count", "description": "Block volumes" }
   ]
 }

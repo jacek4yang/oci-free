@@ -12,7 +12,7 @@
   "lifecycleState": "AVAILABLE",
   "timeCreated": "2026-02-01T09:15:00.000Z",
   "freeformTags": {
-    "oci-free:managed": "1",
+    "oci-free:managed": "created",
     "oci-free:instance": "ocid1.instance.oc1.iad.anuwcljtexampleinstance1"
   }
 }

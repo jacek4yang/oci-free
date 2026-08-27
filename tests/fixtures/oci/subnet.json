@@ -10,5 +10,5 @@
   "prohibitInternetIngress": false,
   "dhcpOptionsId": "ocid1.dhcpoptions.oc1.iad.aaaaaaaaexampledhcp1",
   "lifecycleState": "AVAILABLE",
-  "freeformTags": { "oci-free:managed": "1" }
+  "freeformTags": { "oci-free:managed": "created" }
 }

@@ -1,7 +1,16 @@
 pub mod account;
+pub mod config_init;
 pub mod context;
+pub mod cost;
+pub mod create;
+pub mod delete;
 pub mod discovery;
 pub mod doctor;
 pub mod free;
+pub mod network_setup;
+pub mod policy;
+pub mod ssh;
+pub mod status;
 pub mod vm;
+pub mod vmlifecycle;
 pub mod vmnet;

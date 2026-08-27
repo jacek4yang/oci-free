@@ -16,7 +16,8 @@
     "region": "iad",
     "timeCreated": "2026-01-15T10:04:00.000Z",
     "freeformTags": {
-      "oci-free:managed": "true"
+      "oci-free:managed": "created",
+      "oci-free:role": "instance"
     },
     "definedTags": {}
   },

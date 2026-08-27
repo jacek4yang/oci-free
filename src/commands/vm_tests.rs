@@ -104,10 +104,28 @@ fn managed_ownership_comes_from_the_tag() {
     // A user instance named to look managed must still read as unmanaged.
     let mut impostor = instances[1].clone();
     impostor.display_name = Some("oci-free-managed-instance".to_owned());
+    let summarised = summarise(&impostor, &shapes(), &policy());
     assert!(
-        !summarise(&impostor, &shapes(), &policy()).managed_by_oci_free,
+        !summarised.managed_by_oci_free,
         "ownership must not be inferred from a name"
     );
+    assert_eq!(
+        summarised.ownership,
+        crate::domain::ownership::Ownership::UserOwned
+    );
+
+    // A tag value this build does not recognise must fail closed rather than
+    // putting the instance in scope for automated cleanup.
+    let mut mystery = instances[1].clone();
+    mystery
+        .freeform_tags
+        .insert("oci-free:managed".to_owned(), "true".to_owned());
+    let summarised = summarise(&mystery, &shapes(), &policy());
+    assert_eq!(
+        summarised.ownership,
+        crate::domain::ownership::Ownership::Unknown
+    );
+    assert!(!summarised.managed_by_oci_free);
 }
 
 /// Without a shape record there is no billing evidence, so the safe reading is

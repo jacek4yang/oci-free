@@ -185,6 +185,7 @@ mod tests {
             max_ocpus: 4.0,
             max_memory_gb: 24.0,
             max_instances: None,
+            service_limits: None,
         }
     }
 
@@ -196,6 +197,7 @@ mod tests {
             max_ocpus: 2.0,
             max_memory_gb: 2.0,
             max_instances: Some(2),
+            service_limits: None,
         }
     }
 

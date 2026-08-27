@@ -197,6 +197,30 @@ impl MockBuilder {
         self.route(method, contains, vec![reply])
     }
 
+    /// Register a route ahead of everything already registered.
+    ///
+    /// Routes are matched in registration order, so this is how a test
+    /// overrides one answer of a shared scenario helper without rebuilding it.
+    #[must_use]
+    pub fn override_route(mut self, method: &str, contains: &str, replies: Vec<Reply>) -> Self {
+        self.routes.insert(
+            0,
+            Route {
+                method: Some(method.to_owned()),
+                contains: contains.to_owned(),
+                replies,
+                served: AtomicUsize::new(0),
+            },
+        );
+        self
+    }
+
+    /// Override a single answer of a shared scenario.
+    #[must_use]
+    pub fn override_reply(self, method: &str, contains: &str, reply: Reply) -> Self {
+        self.override_route(method, contains, vec![reply])
+    }
+
     /// Answer a matching GET with a JSON document.
     #[must_use]
     pub fn get(self, contains: &str, body: &serde_json::Value) -> Self {

@@ -76,7 +76,7 @@ fn decodes_a_vcn() {
         vcn.freeform_tags
             .get("oci-free:managed")
             .map(String::as_str),
-        Some("1")
+        Some("created")
     );
 }
 

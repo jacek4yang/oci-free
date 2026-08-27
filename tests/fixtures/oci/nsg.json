@@ -5,7 +5,7 @@
   "displayName": "oci-free-free-arm-1",
   "lifecycleState": "AVAILABLE",
   "freeformTags": {
-    "oci-free:managed": "1",
+    "oci-free:managed": "created",
     "oci-free:instance": "ocid1.instance.oc1.iad.anuwcljtexampleinstance1",
     "oci-free:role": "instance-nsg"
   }
