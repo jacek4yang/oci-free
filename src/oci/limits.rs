@@ -1,6 +1,8 @@
 //! Service limits and resource availability.
 //!
-//! The Limits API (version 20181025) answers two different questions, and
+//! The Limits API operations use the `20190729` request path (the Oracle API
+//! reference itself is catalogued as 20181025). It answers two different
+//! questions, and
 //! keeping them apart matters:
 //!
 //! * `limitValues` says how much of a resource the tenancy is *allowed*;
@@ -26,7 +28,7 @@ pub const SERVICE_VCN: &str = "vcn";
 /// Limits service name for block storage.
 pub const SERVICE_BLOCK_STORAGE: &str = "block-storage";
 
-/// One entry of `GET /20181025/services`.
+/// One entry of `GET /20190729/services`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceSummary {
@@ -35,7 +37,7 @@ pub struct ServiceSummary {
     pub description: Option<String>,
 }
 
-/// One entry of `GET /20181025/limitDefinitions`.
+/// One entry of `GET /20190729/limitDefinitions`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LimitDefinition {
@@ -61,7 +63,7 @@ impl LimitDefinition {
     }
 }
 
-/// One entry of `GET /20181025/limitValues`.
+/// One entry of `GET /20190729/limitValues`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LimitValue {
@@ -75,7 +77,7 @@ pub struct LimitValue {
     pub value: Option<i64>,
 }
 
-/// `GET /20181025/resourceAvailability`.
+/// `GET /20190729/services/{service}/limits/{limit}/resourceAvailability`.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceAvailability {

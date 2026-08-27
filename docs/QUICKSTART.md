@@ -60,7 +60,7 @@ $ oci-free doctor
 This validates the configuration locally, then makes read-only calls to OCI to
 prove the credentials work and to report which permissions you have.
 
-A `warning` on **Usage and cost permission** or **Service limits permission** is
+A `warning` on **Usage and cost access** or **Service limits access** is
 normal and expected on a Free Tier tenancy. Those are optional; the commands
 that need them will say so rather than failing. Only a `failed` line needs
 fixing, and each one names the next action.

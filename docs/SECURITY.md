@@ -9,6 +9,14 @@
 - Credential files should use restrictive host permissions where the platform supports them.
 - The project must not require the official OCI CLI, Python, Node.js, or Java at runtime.
 
+## Signed-request destinations
+
+Endpoint resolution is allowlisted and rule-driven. OCI services select an
+explicit, reviewed hostname style for each known realm; an unknown or
+unverified realm/service convention is refused before a request is signed or
+sent. `oci-free` never discovers a signed-request destination by guessing DNS
+names or following redirects.
+
 ## Billing safety
 
 Strict mode fails closed. A resource that cannot be proven Always Free is blocked by default. Every potentially billable mutation requires a preflight assessment and explicit confirmation in interactive mode.

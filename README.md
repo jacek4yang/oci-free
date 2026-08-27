@@ -57,9 +57,9 @@ $ oci-free doctor
 [     ok] Tenancy access: read tenancy ocid1.tenancy.oc1..…xk3q7a (example-tenancy)
 [     ok] Home region: this profile targets the home region us-ashburn-1
 [     ok] Availability domains: 3 domain(s) available: Uocm:US-ASHBURN-AD-1, ...
-[     ok] Compute read permission: listed 2 instance(s)
-[     ok] Networking read permission: listed 1 VCN(s)
-[warning] Usage and cost permission: this tenancy does not grant the Usage API, so
+[     ok] Compute read access: listed 2 instance(s)
+[     ok] Networking read access: listed 1 VCN(s)
+[warning] Usage and cost access: this tenancy does not grant the Usage API, so
           `oci-free cost` will report cost as unavailable rather than as zero
           next: optional: `allow group <g> to read usage-report in tenancy`
 ```
@@ -82,7 +82,7 @@ never a success-shaped result.
 | Command | What it does |
 | --- | --- |
 | `oci-free config init` / `show` | Write a profile with validation; show the configuration in use, redacted. |
-| `oci-free doctor` | Local checks, then read-only live checks naming the IAM grant behind each capability. |
+| `oci-free doctor` | Local checks, then read-only live checks distinguishing endpoint/network failures from confirmed OCI IAM denials. |
 | `oci-free status` | Account, instances, free capacity, cost, and exposure in one screen, degrading section by section. |
 | `oci-free cost` | Billing-period spend. Unavailable is reported as unavailable, never as `0.00`. |
 | `oci-free account info` / `limits` / `usage` | Tenancy and home region; Free Tier-relevant limits with usage; consumption by service. |
@@ -101,7 +101,10 @@ in one step with no local toolchain), subnet-wide Security List edits (they
 affect every instance in the subnet, so they belong in the Console), and any
 form of activity generation to defeat idle reclamation.
 
-Not yet done: validation against a live OCI tenancy. See
+Live validation is in progress. Signed authentication and the core read-only
+services have been exercised against a real tenancy; the first run found a
+Limits/Usage endpoint defect. Re-validation of those corrected requests and the
+remaining mutation checklist are still required. See
 [`docs/LIVE-VALIDATION.md`](docs/LIVE-VALIDATION.md).
 
 ## Documentation

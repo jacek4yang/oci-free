@@ -41,6 +41,35 @@ step what should happen and what a failure would mean.
 CI is and must stay credential-free. No workflow in this repository makes an OCI
 API call.
 
+## Finding from the first real read-only run
+
+The first live run against a commercial (`oc1`) tenancy in `us-sanjose-1`
+successfully completed signed authentication, tenancy and home-region reads,
+availability-domain discovery, Compute reads, and Networking reads. Limits and
+Usage then failed before reaching OCI because the resolver had applied the
+Identity/Core hostname rule to every service.
+
+The credential-free network evidence was:
+
+| Hostname | Observation |
+| --- | --- |
+| `usageapi.us-sanjose-1.oraclecloud.com` | DNS returned NXDOMAIN. |
+| `usageapi.us-sanjose-1.oci.oraclecloud.com` | DNS resolved and TCP/443 succeeded. |
+| `limits.us-sanjose-1.oci.oraclecloud.com` | DNS resolved and TCP/443 succeeded. |
+
+This established a service-specific rule, not a San Jose exception: Oracle's
+generated [Limits client](https://github.com/oracle/oci-python-sdk/blob/master/src/oci/limits/limits_client.py)
+and [Usage client](https://github.com/oracle/oci-python-sdk/blob/master/src/oci/usage_api/usageapi_client.py)
+specify `limits.{region}.oci.{secondLevelDomain}` and
+`usageapi.{region}.oci.{secondLevelDomain}`. The same SDK source records the
+Limits operation paths under `20190729`; Usage remains
+`POST /20200107/usage`. Offline regression tests now pin those authorities and
+paths without making DNS queries.
+
+No tenancy OCID, user OCID, fingerprint, key path, email address, or private
+key from the live run is recorded here. A second live run is still required to
+prove that OCI accepts the corrected Limits and Usage requests.
+
 ## Before you start
 
 Use a **throwaway tenancy** if you can. Failing that, accept that this checklist
@@ -50,8 +79,8 @@ creates and destroys real resources.
 $ oci-free doctor
 ```
 
-Everything must pass, except that `Service limits permission` and
-`Usage and cost permission` may warn. Note which ones warn — the read-only
+Everything must pass, except that `Service limits access` and
+`Usage and cost access` may warn. Note which ones warn — the read-only
 section below tells you what that changes.
 
 Record the starting state so you can prove you got back to it:

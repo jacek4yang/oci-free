@@ -1,8 +1,14 @@
 //! OCI service endpoint construction.
 //!
-//! OCI hostnames follow `https://{service}.{region}.{realm-domain}`. The realm
-//! domain is *not* derived from the region name: it comes from the realm, which
-//! this client reads out of the tenancy OCID (`ocid1.tenancy.oc1..` -> `oc1`).
+//! OCI services do not all use one hostname shape. Identity and Core use the
+//! realm-domain form (`identity.{region}.{realm-domain}`), while Limits and
+//! Usage use an additional `oci` label
+//! (`limits.{region}.oci.{realm-domain}`). The service owns that choice here so
+//! callers cannot accidentally reconstruct an authority with the wrong rule.
+//!
+//! The realm domain is *not* derived from the region name: it comes from the
+//! realm, which this client reads out of the tenancy OCID
+//! (`ocid1.tenancy.oc1..` -> `oc1`).
 //!
 //! Deriving the realm from the caller's own tenancy rather than a region table
 //! matters for safety. A region table would have to guess a domain for any
@@ -48,12 +54,40 @@ impl Service {
         }
     }
 
+    /// The hostname construction rule Oracle documents for this service.
+    ///
+    /// Oracle's generated SDK clients are the machine-readable provenance for
+    /// these service-specific templates:
+    ///
+    /// * <https://github.com/oracle/oci-python-sdk/blob/master/src/oci/limits/limits_client.py>
+    /// * <https://github.com/oracle/oci-python-sdk/blob/master/src/oci/usage_api/usageapi_client.py>
+    #[must_use]
+    pub(crate) fn endpoint_style(self) -> EndpointStyle {
+        match self {
+            Self::Identity | Self::Core => EndpointStyle::RealmDomain,
+            Self::Limits | Self::Usage => EndpointStyle::OciRealmDomain,
+        }
+    }
+
+    /// Human-readable service name used in diagnostics.
+    #[must_use]
+    pub(crate) fn display_name(self) -> &'static str {
+        match self {
+            Self::Identity => "Identity",
+            Self::Core => "Core",
+            Self::Limits => "Limits",
+            Self::Usage => "Usage",
+        }
+    }
+
     /// The API version path segment used by this service.
     #[must_use]
     pub fn api_version(self) -> &'static str {
         match self {
             Self::Identity | Self::Core => "20160918",
-            Self::Limits => "20181025",
+            // Oracle names the Limits API reference 20181025, but the current
+            // generated clients send these operations under /20190729.
+            Self::Limits => "20190729",
             Self::Usage => "20200107",
         }
     }
@@ -65,32 +99,69 @@ impl fmt::Display for Service {
     }
 }
 
+/// A service-specific OCI hostname construction rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EndpointStyle {
+    /// `{service}.{region}.{realm-domain}`
+    RealmDomain,
+    /// `{service}.{region}.oci.{realm-domain}`
+    OciRealmDomain,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RealmEndpoints {
+    domain: &'static str,
+    /// The label is optional by design. If Oracle adds a realm whose service
+    /// template has not been verified, Identity/Core can remain available
+    /// while Limits/Usage refuse before any signed request is sent.
+    oci_subdomain: Option<&'static str>,
+}
+
+const fn verified_realm(domain: &'static str) -> RealmEndpoints {
+    RealmEndpoints {
+        domain,
+        oci_subdomain: Some("oci"),
+    }
+}
+
+/// Endpoint components for an OCI realm.
+///
+/// Domains are kept in sync with Oracle's generated SDK realm definitions.
+/// The Limits and Usage clients use `oci.{secondLevelDomain}` for these realms:
+/// <https://github.com/oracle/oci-python-sdk/blob/master/src/oci/regions_definitions.py>
+fn realm_endpoints(realm: &str) -> Option<RealmEndpoints> {
+    match realm {
+        "oc1" => Some(verified_realm("oraclecloud.com")),
+        // US and UK government realms.
+        "oc2" | "oc3" => Some(verified_realm("oraclegovcloud.com")),
+        "oc4" => Some(verified_realm("oraclegovcloud.uk")),
+        "oc8" => Some(verified_realm("oraclecloud8.com")),
+        "oc9" => Some(verified_realm("oraclecloud9.com")),
+        "oc10" => Some(verified_realm("oraclecloud10.com")),
+        "oc14" => Some(verified_realm("oraclecloud14.com")),
+        "oc15" => Some(verified_realm("oraclecloud15.com")),
+        "oc19" => Some(verified_realm("oraclecloud.eu")),
+        "oc20" => Some(verified_realm("oraclecloud20.com")),
+        "oc21" => Some(verified_realm("oraclecloud21.com")),
+        "oc23" => Some(verified_realm("oraclecloud23.com")),
+        "oc24" => Some(verified_realm("oraclecloud24.com")),
+        "oc26" => Some(verified_realm("oraclecloud26.com")),
+        "oc29" => Some(verified_realm("oraclecloud29.com")),
+        "oc35" => Some(verified_realm("oraclecloud35.com")),
+        "oc42" => Some(verified_realm("oraclecloud42.com")),
+        "oc51" => Some(verified_realm("oraclecloud51.com")),
+        "oc52" => Some(verified_realm("oraclecloud52.com")),
+        _ => None,
+    }
+}
+
 /// The DNS domain for an OCI realm.
 ///
 /// Sourced from Oracle's published realm list. Realms absent from this table
 /// are rejected rather than guessed.
 #[must_use]
 pub fn realm_domain(realm: &str) -> Option<&'static str> {
-    match realm {
-        "oc1" => Some("oraclecloud.com"),
-        // US and UK government realms.
-        "oc2" | "oc3" => Some("oraclegovcloud.com"),
-        "oc4" => Some("oraclegovcloud.uk"),
-        "oc8" => Some("oraclecloud8.com"),
-        "oc9" => Some("oraclecloud9.com"),
-        "oc10" => Some("oraclecloud10.com"),
-        "oc14" => Some("oraclecloud14.com"),
-        "oc15" => Some("oraclecloud15.com"),
-        "oc19" => Some("oraclecloud.eu"),
-        "oc20" => Some("oraclecloud20.com"),
-        "oc21" => Some("oraclecloud21.com"),
-        "oc23" => Some("oraclecloud23.com"),
-        "oc24" => Some("oraclecloud24.com"),
-        "oc26" => Some("oraclecloud26.com"),
-        "oc29" => Some("oraclecloud29.com"),
-        "oc35" => Some("oraclecloud35.com"),
-        _ => None,
-    }
+    realm_endpoints(realm).map(|endpoints| endpoints.domain)
 }
 
 /// Resolves service URLs for one tenancy and region.
@@ -98,6 +169,7 @@ pub fn realm_domain(realm: &str) -> Option<&'static str> {
 pub struct EndpointResolver {
     realm: String,
     domain: &'static str,
+    oci_subdomain: Option<&'static str>,
     region: Region,
     /// Test-only authority override, used to point the transport at an
     /// in-process mock server. Compiled out of release builds entirely, so no
@@ -110,7 +182,7 @@ impl EndpointResolver {
     /// Build a resolver from the tenancy OCID's realm and a region.
     pub fn new(tenancy: &Ocid, region: Region) -> Result<Self> {
         let realm = tenancy.realm();
-        let domain = realm_domain(realm).ok_or_else(|| {
+        let endpoints = realm_endpoints(realm).ok_or_else(|| {
             Error::new(
                 ErrorKind::Configuration,
                 format!("unrecognised OCI realm `{realm}` in the tenancy OCID"),
@@ -127,7 +199,8 @@ impl EndpointResolver {
 
         Ok(Self {
             realm: realm.to_owned(),
-            domain,
+            domain: endpoints.domain,
+            oci_subdomain: endpoints.oci_subdomain,
             region,
             #[cfg(test)]
             authority_override: None,
@@ -156,6 +229,7 @@ impl EndpointResolver {
         Self {
             realm: self.realm.clone(),
             domain: self.domain,
+            oci_subdomain: self.oci_subdomain,
             region,
             #[cfg(test)]
             authority_override: self.authority_override.clone(),
@@ -163,19 +237,52 @@ impl EndpointResolver {
     }
 
     /// The host for a service, for example `iaas.us-ashburn-1.oraclecloud.com`.
-    #[must_use]
-    pub fn host(&self, service: Service) -> String {
+    ///
+    /// An unverified realm/service convention is an error rather than a
+    /// guessed authority. No request has been built or signed at this point.
+    pub fn host(&self, service: Service) -> Result<String> {
         #[cfg(test)]
         if let Some(authority) = &self.authority_override {
-            return authority.clone();
+            return Ok(authority.clone());
         }
-        format!("{}.{}.{}", service.host_prefix(), self.region, self.domain)
+
+        match service.endpoint_style() {
+            EndpointStyle::RealmDomain => Ok(format!(
+                "{}.{}.{}",
+                service.host_prefix(),
+                self.region,
+                self.domain
+            )),
+            EndpointStyle::OciRealmDomain => {
+                let subdomain = self.oci_subdomain.ok_or_else(|| {
+                    Error::configuration(format!(
+                        "oci-free does not know a safe {} endpoint for OCI realm {}",
+                        service.display_name(),
+                        self.realm
+                    ))
+                    .with_context(
+                        "the realm/service hostname convention has not been verified; no request was sent",
+                    )
+                    .with_remediation(
+                        "check Oracle's current service endpoint documentation and file an issue with the realm and service",
+                    )
+                })?;
+                Ok(format!(
+                    "{}.{}.{}.{}",
+                    service.host_prefix(),
+                    self.region,
+                    subdomain,
+                    self.domain
+                ))
+            }
+        }
     }
 
     /// Build a URL for `path`, which must already be percent-encoded and must
     /// start with `/`.
     pub fn url(&self, service: Service, path: &str) -> Result<Url> {
-        let base = format!("https://{}", self.host(service));
+        validate_request_path(path)?;
+        let base = format!("https://{}", self.host(service)?);
         let joined = format!("{base}{path}");
         Url::parse(&joined).map_err(|error| {
             Error::new(
@@ -188,13 +295,42 @@ impl EndpointResolver {
 
     /// Build a versioned URL, prefixing the service's API version segment.
     pub fn versioned_url(&self, service: Service, path: &str) -> Result<Url> {
+        validate_request_path(path)?;
         self.url(service, &format!("/{}{path}", service.api_version()))
     }
 }
 
+/// Refuse path forms that could be interpreted as another authority, conceal
+/// part of the signed target, or be rewritten while parsing. All production
+/// callers use fixed paths and append user data through `Url::query_pairs_mut`.
+fn validate_request_path(path: &str) -> Result<()> {
+    let invalid_reason = if !path.starts_with('/') {
+        Some("the request path must start with `/`")
+    } else if path.starts_with("//") {
+        Some("a request path must not be a network-path reference starting with `//`")
+    } else if path.contains('\\') {
+        Some("a request path must not contain backslashes")
+    } else if path.contains('#') {
+        Some("a request path must not contain a URL fragment")
+    } else if path
+        .bytes()
+        .any(|byte| byte.is_ascii_control() || byte == b' ')
+    {
+        Some("a request path must be percent-encoded and contain no whitespace")
+    } else {
+        None
+    };
+
+    invalid_reason.map_or(Ok(()), |reason| {
+        Err(Error::invalid_input("refused an invalid OCI request path")
+            .with_context(reason)
+            .with_remediation("use a percent-encoded absolute path beginning with one `/`"))
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{EndpointResolver, Service, realm_domain};
+    use super::{EndpointResolver, EndpointStyle, Service, realm_domain};
     use crate::domain::{ocid::Ocid, region::Region};
 
     fn resolver(tenancy: &str, region: &str) -> EndpointResolver {
@@ -207,25 +343,62 @@ mod tests {
 
     const OC1_TENANCY: &str = "ocid1.tenancy.oc1..aaaaaaaaexampletenancyid7xk3q7a";
 
+    fn host(resolver: &EndpointResolver, service: Service) -> String {
+        resolver.host(service).expect("known service endpoint")
+    }
+
     #[test]
-    fn builds_commercial_realm_hosts() {
-        let resolver = resolver(OC1_TENANCY, "us-ashburn-1");
+    fn commercial_services_select_their_documented_endpoint_style() {
         assert_eq!(
-            resolver.host(Service::Identity),
-            "identity.us-ashburn-1.oraclecloud.com"
+            Service::Identity.endpoint_style(),
+            EndpointStyle::RealmDomain
+        );
+        assert_eq!(Service::Core.endpoint_style(), EndpointStyle::RealmDomain);
+        assert_eq!(
+            Service::Limits.endpoint_style(),
+            EndpointStyle::OciRealmDomain
         );
         assert_eq!(
-            resolver.host(Service::Core),
-            "iaas.us-ashburn-1.oraclecloud.com"
+            Service::Usage.endpoint_style(),
+            EndpointStyle::OciRealmDomain
         );
-        assert_eq!(
-            resolver.host(Service::Limits),
-            "limits.us-ashburn-1.oraclecloud.com"
-        );
-        assert_eq!(
-            resolver.host(Service::Usage),
-            "usageapi.us-ashburn-1.oraclecloud.com"
-        );
+    }
+
+    #[test]
+    fn commercial_limits_and_usage_use_oci_subdomain() {
+        for region in ["us-sanjose-1", "us-ashburn-1", "ap-tokyo-1"] {
+            let resolver = resolver(OC1_TENANCY, region);
+            assert_eq!(
+                host(&resolver, Service::Identity),
+                format!("identity.{region}.oraclecloud.com")
+            );
+            assert_eq!(
+                host(&resolver, Service::Core),
+                format!("iaas.{region}.oraclecloud.com")
+            );
+            assert_eq!(
+                host(&resolver, Service::Limits),
+                format!("limits.{region}.oci.oraclecloud.com")
+            );
+            assert_eq!(
+                host(&resolver, Service::Usage),
+                format!("usageapi.{region}.oci.oraclecloud.com")
+            );
+        }
+    }
+
+    /// This exact hostname was validated after the old form returned NXDOMAIN
+    /// in a real commercial tenancy.
+    #[test]
+    fn san_jose_usage_endpoint_matches_live_validated_hostname() {
+        let resolver = resolver(OC1_TENANCY, "us-sanjose-1");
+        let usage = host(&resolver, Service::Usage);
+        let limits = host(&resolver, Service::Limits);
+
+        assert_eq!(usage, "usageapi.us-sanjose-1.oci.oraclecloud.com");
+        assert_ne!(usage, "usageapi.us-sanjose-1.oraclecloud.com");
+        assert_eq!(limits, "limits.us-sanjose-1.oci.oraclecloud.com");
+        assert_ne!(limits, "limits.us-sanjose-1.oraclecloud.com");
     }
 
     /// Compute, networking and block storage share one host; a regression here
@@ -239,14 +412,64 @@ mod tests {
     #[test]
     fn versioned_urls_include_the_api_version() {
         let resolver = resolver(OC1_TENANCY, "eu-frankfurt-1");
-        let url = resolver
+        let core = resolver
             .versioned_url(Service::Core, "/instances?compartmentId=x")
             .expect("url");
         assert_eq!(
-            url.as_str(),
+            core.as_str(),
             "https://iaas.eu-frankfurt-1.oraclecloud.com/20160918/instances?compartmentId=x"
         );
-        assert_eq!(url.scheme(), "https");
+        assert_eq!(core.scheme(), "https");
+
+        let limits = resolver
+            .versioned_url(Service::Limits, "/limitValues?compartmentId=x")
+            .expect("limits url");
+        assert_eq!(
+            limits.as_str(),
+            "https://limits.eu-frankfurt-1.oci.oraclecloud.com/20190729/limitValues?compartmentId=x"
+        );
+
+        let usage = resolver
+            .versioned_url(Service::Usage, "/usage")
+            .expect("usage url");
+        assert_eq!(
+            usage.as_str(),
+            "https://usageapi.eu-frankfurt-1.oci.oraclecloud.com/20200107/usage"
+        );
+    }
+
+    #[test]
+    fn unversioned_urls_use_the_same_service_specific_authority() {
+        let resolver = resolver(OC1_TENANCY, "ap-tokyo-1");
+        let url = resolver
+            .url(Service::Limits, "/health")
+            .expect("unversioned URL");
+        assert_eq!(
+            url.as_str(),
+            "https://limits.ap-tokyo-1.oci.oraclecloud.com/health"
+        );
+    }
+
+    #[test]
+    fn malformed_request_paths_are_refused_before_a_url_is_built() {
+        let resolver = resolver(OC1_TENANCY, "us-ashburn-1");
+        for path in [
+            "instances",
+            "//untrusted.example/instances",
+            "/\\untrusted.example/instances",
+            "/instances#unsigned-fragment",
+            "/instances?display name=not-encoded",
+            "/instances\nforged-header",
+        ] {
+            let error = resolver
+                .url(Service::Core, path)
+                .expect_err("malformed path must fail closed");
+            assert_eq!(error.kind(), crate::error::ErrorKind::InvalidInput);
+            assert!(error.message().contains("invalid OCI request path"));
+            resolver
+                .versioned_url(Service::Core, path)
+                .expect_err("versioned malformed path must also fail closed");
+        }
     }
 
     #[test]
@@ -270,8 +493,69 @@ mod tests {
         let gov = resolver("ocid1.tenancy.oc2..aaaaaaaagovtenancy", "us-langley-1");
         assert_eq!(gov.realm(), "oc2");
         assert_eq!(
-            gov.host(Service::Identity),
+            host(&gov, Service::Identity),
             "identity.us-langley-1.oraclegovcloud.com"
+        );
+        assert_eq!(
+            host(&gov, Service::Core),
+            "iaas.us-langley-1.oraclegovcloud.com"
+        );
+        assert_eq!(
+            host(&gov, Service::Limits),
+            "limits.us-langley-1.oci.oraclegovcloud.com"
+        );
+        assert_eq!(
+            host(&gov, Service::Usage),
+            "usageapi.us-langley-1.oci.oraclegovcloud.com"
+        );
+    }
+
+    #[test]
+    fn sovereign_realm_uses_its_domain_with_the_service_specific_style() {
+        let sovereign = resolver(
+            "ocid1.tenancy.oc19..aaaaaaaasovereigntenancy",
+            "eu-madrid-2",
+        );
+        assert_eq!(
+            host(&sovereign, Service::Core),
+            "iaas.eu-madrid-2.oraclecloud.eu"
+        );
+        assert_eq!(
+            host(&sovereign, Service::Limits),
+            "limits.eu-madrid-2.oci.oraclecloud.eu"
+        );
+        assert_eq!(
+            host(&sovereign, Service::Usage),
+            "usageapi.eu-madrid-2.oci.oraclecloud.eu"
+        );
+    }
+
+    /// A future realm can be enabled for established endpoint styles without
+    /// silently guessing the service styles whose template is still unknown.
+    #[test]
+    fn an_unverified_realm_service_style_fails_before_building_a_url() {
+        let resolver = EndpointResolver {
+            realm: "oc-test".to_owned(),
+            domain: "example.invalid",
+            oci_subdomain: None,
+            region: "test-region-1".parse::<Region>().expect("region"),
+            authority_override: None,
+        };
+
+        assert_eq!(
+            host(&resolver, Service::Identity),
+            "identity.test-region-1.example.invalid"
+        );
+        let error = resolver
+            .versioned_url(Service::Limits, "/limitValues")
+            .expect_err("an unverified service authority must be refused");
+        assert!(error.message().contains("Limits"));
+        assert!(error.message().contains("oc-test"));
+        assert!(
+            error
+                .context()
+                .expect("context")
+                .contains("no request was sent")
         );
     }
 
@@ -291,10 +575,32 @@ mod tests {
     }
 
     #[test]
-    fn known_realm_domains_are_distinct_where_expected() {
-        assert_eq!(realm_domain("oc1"), Some("oraclecloud.com"));
-        assert_eq!(realm_domain("oc4"), Some("oraclegovcloud.uk"));
-        assert_eq!(realm_domain("oc19"), Some("oraclecloud.eu"));
+    fn every_oracle_sdk_realm_domain_is_allowlisted_exactly() {
+        let expected = [
+            ("oc1", "oraclecloud.com"),
+            ("oc2", "oraclegovcloud.com"),
+            ("oc3", "oraclegovcloud.com"),
+            ("oc4", "oraclegovcloud.uk"),
+            ("oc8", "oraclecloud8.com"),
+            ("oc9", "oraclecloud9.com"),
+            ("oc10", "oraclecloud10.com"),
+            ("oc14", "oraclecloud14.com"),
+            ("oc15", "oraclecloud15.com"),
+            ("oc19", "oraclecloud.eu"),
+            ("oc20", "oraclecloud20.com"),
+            ("oc21", "oraclecloud21.com"),
+            ("oc23", "oraclecloud23.com"),
+            ("oc24", "oraclecloud24.com"),
+            ("oc26", "oraclecloud26.com"),
+            ("oc29", "oraclecloud29.com"),
+            ("oc35", "oraclecloud35.com"),
+            ("oc42", "oraclecloud42.com"),
+            ("oc51", "oraclecloud51.com"),
+            ("oc52", "oraclecloud52.com"),
+        ];
+        for (realm, domain) in expected {
+            assert_eq!(realm_domain(realm), Some(domain), "realm {realm}");
+        }
         assert_eq!(realm_domain("nope"), None);
     }
 
@@ -304,7 +610,7 @@ mod tests {
         let other = home.in_region("uk-london-1".parse::<Region>().expect("region"));
         assert_eq!(other.realm(), "oc1");
         assert_eq!(
-            other.host(Service::Core),
+            host(&other, Service::Core),
             "iaas.uk-london-1.oraclecloud.com"
         );
     }

@@ -2,7 +2,10 @@
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::{CheckStatus, DoctorReport, render_human, render_json, run};
+    use super::{
+        CheckStatus, DoctorReport, diagnostic_detail, is_confirmed_oci_authorization,
+        render_human, render_json, run,
+    };
     use crate::{
         auth::key::testing::{FIXTURE_FINGERPRINT, pkcs8_pem},
         config::{ConfigOptions, Environment},
@@ -257,5 +260,33 @@ mod tests {
 
         assert!(!rendered.contains(TENANCY));
         assert!(!rendered.contains(USER));
+    }
+
+    #[test]
+    fn live_error_details_distinguish_oci_iam_from_an_intermediary() {
+        let confirmed = crate::oci::error::from_response(
+            403,
+            "{}",
+            Some("req-limits-7".to_owned()),
+            "ListLimitValues",
+        );
+        assert!(is_confirmed_oci_authorization(&confirmed));
+        let detail = diagnostic_detail(&confirmed);
+        assert!(detail.contains("HTTP 403"));
+        assert!(detail.contains("req-limits-7"));
+
+        let intermediary = crate::oci::error::from_response(
+            403,
+            "Forbidden",
+            None,
+            "ListLimitValues",
+        )
+        .with_context(
+            "endpoint: https://limits.us-sanjose-1.oci.oraclecloud.com; proxy response",
+        );
+        assert!(!is_confirmed_oci_authorization(&intermediary));
+        let detail = diagnostic_detail(&intermediary);
+        assert!(detail.contains("endpoint: https://limits.us-sanjose-1.oci.oraclecloud.com"));
+        assert!(!detail.contains("OCI request id"));
     }
 }

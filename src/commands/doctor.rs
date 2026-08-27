@@ -28,9 +28,10 @@ use crate::{
     commands::context::CommandContext,
     config::{Config, ConfigOptions, Environment, RedactedConfig},
     domain::time::UtcDateTime,
-    error::Result,
+    error::{Error, ErrorKind, Result},
     oci::{
         compute::ComputeApi,
+        endpoint::{EndpointResolver, Service},
         identity::IdentityApi,
         limits::{LimitsApi, SERVICE_COMPUTE},
         network::NetworkApi,
@@ -294,10 +295,10 @@ const LIVE_CHECKS: [(&str, &str); 8] = [
     ("live_tenancy", "Tenancy access"),
     ("live_home_region", "Home region"),
     ("live_availability_domains", "Availability domains"),
-    ("live_compute_read", "Compute read permission"),
-    ("live_network_read", "Networking read permission"),
-    ("live_limits_read", "Service limits permission"),
-    ("live_usage_read", "Usage and cost permission"),
+    ("live_compute_read", "Compute read access"),
+    ("live_network_read", "Networking read access"),
+    ("live_limits_read", "Service limits access"),
+    ("live_usage_read", "Usage and cost access"),
 ];
 
 /// Read-only probes against the live tenancy.
@@ -327,7 +328,7 @@ async fn live_checks(context: &CommandContext) -> Vec<Check> {
             ));
         }
         Err(error) => {
-            let (id, title) = if error.kind() == crate::error::ErrorKind::Authorization {
+            let (id, title) = if is_confirmed_oci_authorization(error) {
                 // Authenticated but denied: the signature worked.
                 checks.push(Check::pass(
                     "live_authentication",
@@ -341,7 +342,7 @@ async fn live_checks(context: &CommandContext) -> Vec<Check> {
             checks.push(Check::fail(
                 id,
                 title,
-                error.message().to_owned(),
+                diagnostic_detail(error),
                 error.remediation().to_owned(),
             ));
             if id == "live_authentication" {
@@ -381,7 +382,7 @@ async fn live_checks(context: &CommandContext) -> Vec<Check> {
         Err(error) => checks.push(Check::fail(
             "live_home_region",
             "Home region",
-            error.message().to_owned(),
+            diagnostic_detail(error),
             error.remediation().to_owned(),
         )),
     }
@@ -418,7 +419,7 @@ async fn live_checks(context: &CommandContext) -> Vec<Check> {
         Err(error) => checks.push(Check::fail(
             "live_availability_domains",
             "Availability domains",
-            error.message().to_owned(),
+            diagnostic_detail(&error),
             error.remediation().to_owned(),
         )),
     }
@@ -438,15 +439,22 @@ async fn compute_check(context: &CommandContext) -> Check {
     {
         Ok(instances) => Check::pass(
             "live_compute_read",
-            "Compute read permission",
+            "Compute read access",
             format!("listed {} instance(s)", instances.len()),
         ),
-        Err(error) => Check::fail(
-            "live_compute_read",
-            "Compute read permission",
-            error.message().to_owned(),
-            "ask for `allow group <g> to read instance-family in tenancy`",
-        ),
+        Err(error) => {
+            let remediation = if is_confirmed_oci_authorization(&error) {
+                "ask for `allow group <g> to read instance-family in tenancy`"
+            } else {
+                error.remediation()
+            };
+            Check::fail(
+                "live_compute_read",
+                "Compute read access",
+                diagnostic_detail(&error),
+                remediation,
+            )
+        }
     }
 }
 
@@ -457,15 +465,22 @@ async fn network_check(context: &CommandContext) -> Check {
     {
         Ok(vcns) => Check::pass(
             "live_network_read",
-            "Networking read permission",
+            "Networking read access",
             format!("listed {} VCN(s)", vcns.len()),
         ),
-        Err(error) => Check::fail(
-            "live_network_read",
-            "Networking read permission",
-            error.message().to_owned(),
-            "ask for `allow group <g> to read virtual-network-family in tenancy`; without it              `vm net show` cannot report effective exposure",
-        ),
+        Err(error) => {
+            let remediation = if is_confirmed_oci_authorization(&error) {
+                "ask for `allow group <g> to read virtual-network-family in tenancy`; without it `vm net show` cannot report effective exposure"
+            } else {
+                error.remediation()
+            };
+            Check::fail(
+                "live_network_read",
+                "Networking read access",
+                diagnostic_detail(&error),
+                remediation,
+            )
+        }
     }
 }
 
@@ -480,15 +495,25 @@ async fn limits_check(context: &CommandContext) -> Check {
     {
         Ok(values) => Check::pass(
             "live_limits_read",
-            "Service limits permission",
+            "Service limits access",
             format!("read {} compute limit value(s)", values.len()),
         ),
-        Err(error) => Check::warn(
-            "live_limits_read",
-            "Service limits permission",
-            format!("service limits are unavailable: {}", error.message()),
-            "optional: `allow group <g> to read limits in tenancy` makes `account limits` work",
-        ),
+        Err(error) => {
+            let remediation = if is_confirmed_oci_authorization(&error) {
+                "optional: `allow group <g> to read limits in tenancy` makes `account limits` work"
+            } else {
+                error.remediation()
+            };
+            Check::warn(
+                "live_limits_read",
+                "Service limits access",
+                format!(
+                    "service limits are unavailable: {}",
+                    diagnostic_detail(&error)
+                ),
+                remediation,
+            )
+        }
     }
 }
 
@@ -501,25 +526,54 @@ async fn usage_check(context: &CommandContext) -> Check {
     {
         Ok(aggregation) => Check::pass(
             "live_usage_read",
-            "Usage and cost permission",
+            "Usage and cost access",
             match aggregation.total() {
                 Some(total) => format!("read the current billing period; total {total:.2}"),
                 None => "read the current billing period; OCI reported no amount".to_owned(),
             },
         ),
-        Err(error) if error.kind() == crate::error::ErrorKind::Authorization => Check::warn(
+        Err(error) if is_confirmed_oci_authorization(&error) => Check::warn(
             "live_usage_read",
-            "Usage and cost permission",
-            "this tenancy does not grant the Usage API, so `oci-free cost` will report cost as              unavailable rather than as zero",
+            "Usage and cost access",
+            format!(
+                "usage and cost are unavailable: {}; `oci-free cost` will report unavailable rather than zero",
+                diagnostic_detail(&error)
+            ),
             "optional: `allow group <g> to read usage-report in tenancy`",
         ),
         Err(error) => Check::warn(
             "live_usage_read",
-            "Usage and cost permission",
-            format!("usage could not be read: {}", error.message()),
+            "Usage and cost access",
+            format!("usage could not be read: {}", diagnostic_detail(&error)),
             error.remediation().to_owned(),
         ),
     }
+}
+
+/// Authorization guidance is safe only when the denial is confirmed to be an
+/// OCI response. A 401/403 without `opc-request-id` may be a proxy or gateway.
+fn is_confirmed_oci_authorization(error: &Error) -> bool {
+    error.kind() == ErrorKind::Authorization && error.oci().request_id.is_some()
+}
+
+/// Preserve the authority/network context and OCI correlation id inside a
+/// doctor check. A check stores strings rather than the full typed error.
+fn diagnostic_detail(error: &Error) -> String {
+    let mut detail = error.message().to_owned();
+    if let Some(status) = error.oci().status {
+        if !detail.contains(&format!("HTTP {status}")) {
+            detail.push_str(&format!(" (HTTP {status})"));
+        }
+    }
+    if let Some(context) = error.context() {
+        detail.push_str("; ");
+        detail.push_str(context);
+    }
+    if let Some(request_id) = &error.oci().request_id {
+        detail.push_str("; OCI request id: ");
+        detail.push_str(request_id);
+    }
+    detail
 }
 
 /// Checks that depend on a successfully loaded configuration.
@@ -641,11 +695,9 @@ fn check_request_signing(config: &Config, key: PrivateKey) -> Check {
 ///
 /// Nothing is sent. Real endpoint construction arrives with the signed transport
 /// layer; this keeps the self-test shaped like a request the tool will make.
-fn self_test_url(config: &Config) -> std::result::Result<Url, url::ParseError> {
-    Url::parse(&format!(
-        "https://identity.{}.oraclecloud.com/20160918/tenancies/{}",
-        config.region, config.tenancy
-    ))
+fn self_test_url(config: &Config) -> Result<Url> {
+    EndpointResolver::new(&config.tenancy, config.region.clone())?
+        .versioned_url(Service::Identity, &format!("/tenancies/{}", config.tenancy))
 }
 
 #[cfg(unix)]

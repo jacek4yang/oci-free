@@ -91,10 +91,10 @@ pub fn from_response(
         _ => format!("OCI refused {operation} with HTTP {status}"),
     };
 
-    // Every genuine OCI response carries opc-request-id. A failure without one
-    // most likely came from something between the client and OCI -- a proxy, a
-    // TLS-inspecting gateway, or a captive portal -- so attributing it to the
-    // tenancy's IAM policy would send the user to fix the wrong thing.
+    // OCI responses normally carry opc-request-id. Its absence is a strong
+    // diagnostic signal, not cryptographic proof: a failure without one most
+    // likely came from a proxy, TLS-inspecting gateway, or captive portal, so
+    // attributing it immediately to IAM would send the user the wrong way.
     let from_intermediary = request_id.is_none();
 
     let error = Error::new(kind, message).with_oci(OciContext {
@@ -107,10 +107,10 @@ pub fn from_response(
     if from_intermediary && (401..=403).contains(&status) {
         return error
             .with_context(
-                "this response carried no opc-request-id, which every OCI reply includes, so it probably came from a proxy or gateway rather than from OCI",
+                "this response carried no opc-request-id, which OCI responses normally include, so it probably came from a proxy or gateway rather than from OCI",
             )
             .with_remediation(
-                "check any HTTPS proxy, corporate TLS interception, or egress allow-list for *.oraclecloud.com",
+                "check the HTTPS proxy, corporate TLS interception, and egress allow-list for the reported endpoint",
             );
     }
 
@@ -198,7 +198,7 @@ mod tests {
         let error = from_response(403, "Forbidden", None, "ListInstances");
         let context = error.context().expect("context");
         assert!(context.contains("proxy or gateway"));
-        assert!(error.remediation().contains("oraclecloud.com"));
+        assert!(error.remediation().contains("reported endpoint"));
         assert!(
             !context.contains("IAM policy"),
             "must not blame the tenancy policy for a proxy failure"

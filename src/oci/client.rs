@@ -212,8 +212,15 @@ impl OciClient {
         operation: &str,
     ) -> Result<OciResponse<T>> {
         let url = self.endpoints.versioned_url(service, path)?;
-        self.send_json(HttpMethod::Get, url, None, RequestKind::Read, operation)
-            .await
+        self.send_json(
+            service,
+            HttpMethod::Get,
+            url,
+            None,
+            RequestKind::Read,
+            operation,
+        )
+        .await
     }
 
     /// GET one page of a list endpoint, passing an opaque pagination cursor.
@@ -228,8 +235,15 @@ impl OciClient {
         if let Some(page) = page {
             url.query_pairs_mut().append_pair("page", page);
         }
-        self.send_json(HttpMethod::Get, url, None, RequestKind::Read, operation)
-            .await
+        self.send_json(
+            service,
+            HttpMethod::Get,
+            url,
+            None,
+            RequestKind::Read,
+            operation,
+        )
+        .await
     }
 
     /// Walk every page of a list endpoint, concatenating the results.
@@ -296,6 +310,7 @@ impl OciClient {
             RequestKind::UnsafeWrite
         };
         self.send_json(
+            service,
             HttpMethod::Post,
             url,
             Some(RequestBody {
@@ -328,6 +343,7 @@ impl OciClient {
         let url = self.endpoints.versioned_url(service, path)?;
         let encoded = serialize_body(body, operation)?;
         self.send_json(
+            service,
             HttpMethod::Post,
             url,
             Some(RequestBody {
@@ -362,6 +378,7 @@ impl OciClient {
         };
         let raw = self
             .send(
+                service,
                 HttpMethod::Post,
                 url,
                 Some(RequestBody {
@@ -387,6 +404,7 @@ impl OciClient {
         let url = self.endpoints.versioned_url(service, path)?;
         let encoded = serialize_body(body, operation)?;
         self.send_json(
+            service,
             HttpMethod::Put,
             url,
             Some(RequestBody {
@@ -404,6 +422,7 @@ impl OciClient {
     pub async fn delete(&self, service: Service, path: &str, operation: &str) -> Result<()> {
         let url = self.endpoints.versioned_url(service, path)?;
         self.send(
+            service,
             HttpMethod::Delete,
             url,
             None,
@@ -417,13 +436,16 @@ impl OciClient {
     /// Send a request and decode a JSON response.
     async fn send_json<T: DeserializeOwned>(
         &self,
+        service: Service,
         method: HttpMethod,
         url: Url,
         body: Option<RequestBody>,
         kind: RequestKind,
         operation: &str,
     ) -> Result<OciResponse<T>> {
-        let raw = self.send(method, url, body, kind, operation).await?;
+        let raw = self
+            .send(service, method, url, body, kind, operation)
+            .await?;
 
         // An empty body with a success status means "no content"; only attempt
         // that for types that can represent it.
@@ -447,6 +469,7 @@ impl OciClient {
     /// Send a request, applying signing and the retry policy.
     async fn send(
         &self,
+        service: Service,
         method: HttpMethod,
         url: Url,
         body: Option<RequestBody>,
@@ -458,7 +481,9 @@ impl OciClient {
 
         loop {
             let started = Instant::now();
-            let outcome = self.attempt(method, &url, body.as_ref(), operation).await;
+            let outcome = self
+                .attempt(service, method, &url, body.as_ref(), operation)
+                .await;
 
             let (retry_outcome, result) = match outcome {
                 Attempt::Completed(raw) => {
@@ -470,11 +495,14 @@ impl OciClient {
                             code: raw.status.as_u16(),
                             retry_after: raw.retry_after,
                         },
-                        Err(oci_error::from_response(
-                            raw.status.as_u16(),
-                            &String::from_utf8_lossy(&raw.body),
-                            raw.request_id.clone(),
-                            operation,
+                        Err(with_endpoint_context(
+                            oci_error::from_response(
+                                raw.status.as_u16(),
+                                &String::from_utf8_lossy(&raw.body),
+                                raw.request_id.clone(),
+                                operation,
+                            ),
+                            &url,
                         )),
                     )
                 }
@@ -501,6 +529,7 @@ impl OciClient {
     /// One signed request/response round trip.
     async fn attempt(
         &self,
+        service: Service,
         method: HttpMethod,
         url: &Url,
         body: Option<&RequestBody>,
@@ -541,16 +570,21 @@ impl OciClient {
         }
 
         match request.send().await {
-            Ok(response) => self.read_response(response, operation).await,
+            Ok(response) => self.read_response(service, response, operation).await,
             Err(error) => Attempt::Failed {
                 outcome: classify_transport_error(&error),
-                error: transport_error(&error, operation),
+                error: transport_error(&error, service, url, operation),
             },
         }
     }
 
     /// Read a response, enforcing the body ceiling.
-    async fn read_response(&self, mut response: reqwest::Response, operation: &str) -> Attempt {
+    async fn read_response(
+        &self,
+        service: Service,
+        mut response: reqwest::Response,
+        operation: &str,
+    ) -> Attempt {
         let status = response.status();
         let request_id = header_string(response.headers(), REQUEST_ID_HEADER);
         let next_page = header_string(response.headers(), NEXT_PAGE_HEADER);
@@ -609,7 +643,7 @@ impl OciClient {
                     // retrying; the retry policy decides.
                     return Attempt::Failed {
                         outcome: Outcome::BodyIncomplete,
-                        error: transport_error(&error, operation),
+                        error: transport_error(&error, service, response.url(), operation),
                     };
                 }
             }
@@ -676,6 +710,15 @@ fn header_string(headers: &header::HeaderMap, name: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn with_endpoint_context(error: Error, url: &Url) -> Error {
+    let endpoint = url.origin().ascii_serialization();
+    let context = error.context().map_or_else(
+        || format!("endpoint: {endpoint}"),
+        |existing| format!("endpoint: {endpoint}; {existing}"),
+    );
+    error.with_context(context)
+}
+
 /// Parse `Retry-After`, which OCI sends as whole seconds.
 fn parse_retry_after(headers: &header::HeaderMap) -> Option<Duration> {
     header_string(headers, header::RETRY_AFTER.as_str())
@@ -702,20 +745,43 @@ fn classify_transport_error(error: &reqwest::Error) -> Outcome {
 /// contains credentials for this client (OCI authenticates with a header, not a
 /// query parameter), but the message is still rewritten rather than forwarded
 /// so that no future URL shape can leak through this path.
-fn transport_error(error: &reqwest::Error, operation: &str) -> Error {
+fn transport_error(error: &reqwest::Error, service: Service, url: &Url, operation: &str) -> Error {
+    // Keep diagnostics at the authority boundary. OCI query strings can carry
+    // resource identifiers, while the scheme/host/port are sufficient to
+    // diagnose DNS, proxy, TCP, and TLS failures.
+    let endpoint = url.origin().ascii_serialization();
     if error.is_timeout() {
-        return Error::timeout(format!("{operation} timed out"))
-            .with_context("OCI did not respond before the request deadline");
+        return Error::timeout(format!(
+            "the OCI {} service timed out during {operation}",
+            service.display_name()
+        ))
+        .with_context(format!(
+            "endpoint: {endpoint}; OCI did not respond before the request deadline"
+        ))
+        .with_remediation(
+            "check DNS, HTTPS proxy settings, TLS interception, and connectivity; then retry",
+        );
     }
     if error.is_connect() {
-        return Error::network(format!("could not connect to OCI for {operation}"))
-            .with_context("DNS resolution, the TCP connection, or the TLS handshake failed")
-            .with_remediation(
-                "check network connectivity, DNS, and any HTTPS proxy or TLS interception",
-            );
+        return Error::network(format!(
+            "could not connect to the OCI {} service for {operation}",
+            service.display_name()
+        ))
+        .with_context(format!(
+            "endpoint: {endpoint}; DNS resolution, the TCP connection, or the TLS handshake failed"
+        ))
+        .with_remediation(
+            "check DNS, HTTPS proxy settings, TLS interception, and connectivity to the endpoint",
+        );
     }
-    Error::network(format!("the connection to OCI failed during {operation}"))
-        .with_context("the response was interrupted before it completed")
+    Error::network(format!(
+        "the connection to the OCI {} service failed during {operation}",
+        service.display_name()
+    ))
+    .with_context(format!(
+        "endpoint: {endpoint}; the response was interrupted before it completed"
+    ))
+    .with_remediation("check the HTTPS proxy and connectivity, then retry")
 }
 
 #[cfg(test)]

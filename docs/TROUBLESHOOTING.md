@@ -60,6 +60,14 @@ $ chmod 600 ~/.oci/oci_api_key.pem
 
 ## Authentication and permissions
 
+Use the failure shape before changing IAM policy:
+
+| Evidence | Meaning | Next action |
+| --- | --- | --- |
+| DNS/TCP/TLS failure, with an `endpoint:` and no HTTP status | OCI was not reached | Check the displayed hostname, DNS, HTTPS proxy, TLS interception, and TCP/443. |
+| HTTP 401/403 without `opc-request-id` | A proxy or gateway probably answered | Check proxy and egress configuration; do not change IAM yet. |
+| HTTP 403 with `opc-request-id` | OCI authenticated the caller and denied the operation | Add the optional IAM grant if that capability is wanted. |
+
 ### `OCI refused ... with HTTP 401`
 
 The signature was rejected. The two usual causes:
@@ -90,18 +98,43 @@ unavailable, and everything else still works.
 
 ### `403` **without** an OCI request id
 
-Every genuine OCI reply carries `opc-request-id`. A 401 or 403 without one
-almost certainly came from something between you and OCI — a corporate proxy, a
-TLS-inspecting gateway, or an egress allow-list — so oci-free says so rather
-than sending you to fix an IAM policy that is not the problem.
+OCI replies normally carry `opc-request-id`. A 401 or 403 without one probably
+came from something between you and OCI — a corporate proxy, a TLS-inspecting
+gateway, or an egress allow-list — so oci-free points to networking first. The
+header is a diagnostic signal, not proof of response authenticity.
 
-Check `HTTPS_PROXY`, and whether `*.oraclecloud.com` is permitted.
+Check `HTTPS_PROXY`, and whether the exact `endpoint:` shown by oci-free is
+permitted. Commercial Limits and Usage endpoints include the `oci` label, for
+example `limits.us-sanjose-1.oci.oraclecloud.com`.
 
 ### `could not connect to OCI`
 
 DNS, the TCP connection, or the TLS handshake failed. Check connectivity, DNS,
 and any HTTPS proxy or TLS interception. oci-free uses rustls with the system
 trust store and will not accept a certificate it cannot verify.
+
+The error includes only the endpoint authority, not the request path or query.
+Test that exact hostname. For a commercial region:
+
+```powershell
+Resolve-DnsName usageapi.<region>.oci.oraclecloud.com
+Test-NetConnection usageapi.<region>.oci.oraclecloud.com -Port 443
+Resolve-DnsName limits.<region>.oci.oraclecloud.com
+Test-NetConnection limits.<region>.oci.oraclecloud.com -Port 443
+```
+
+On Linux or macOS:
+
+```console
+$ dig +short usageapi.<region>.oci.oraclecloud.com
+$ nc -vz usageapi.<region>.oci.oraclecloud.com 443
+$ dig +short limits.<region>.oci.oraclecloud.com
+$ nc -vz limits.<region>.oci.oraclecloud.com 443
+```
+
+For a government or sovereign realm, copy the exact endpoint from the error
+instead of substituting `oraclecloud.com`. These commands need no OCI key and
+must never be given private-key contents.
 
 ### `OCI redirected ... to <somewhere>`
 
