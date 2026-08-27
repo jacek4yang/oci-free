@@ -1,0 +1,14 @@
+/target/
+/.idea/
+/.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Local OCI credentials and application state
+.oci/
+.oci-free/
+*.pem
+*.key
+.env
