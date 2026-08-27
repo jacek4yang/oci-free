@@ -91,12 +91,28 @@ pub fn from_response(
         _ => format!("OCI refused {operation} with HTTP {status}"),
     };
 
+    // Every genuine OCI response carries opc-request-id. A failure without one
+    // most likely came from something between the client and OCI -- a proxy, a
+    // TLS-inspecting gateway, or a captive portal -- so attributing it to the
+    // tenancy's IAM policy would send the user to fix the wrong thing.
+    let from_intermediary = request_id.is_none();
+
     let error = Error::new(kind, message).with_oci(OciContext {
         status: Some(status),
         code: parsed.code.clone(),
         request_id,
         operation: Some(operation.to_owned()),
     });
+
+    if from_intermediary && (401..=403).contains(&status) {
+        return error
+            .with_context(
+                "this response carried no opc-request-id, which every OCI reply includes, so it probably came from a proxy or gateway rather than from OCI",
+            )
+            .with_remediation(
+                "check any HTTPS proxy, corporate TLS interception, or egress allow-list for *.oraclecloud.com",
+            );
+    }
 
     match kind {
         ErrorKind::Authentication => error
@@ -174,13 +190,57 @@ mod tests {
         assert!(error.message().chars().count() < MAX_MESSAGE_LEN + 200);
     }
 
+    /// Observed in practice: an egress proxy returning 403 was reported as an
+    /// OCI IAM denial, sending the user to fix a policy that was not the
+    /// problem. A genuine OCI reply always carries opc-request-id.
+    #[test]
+    fn a_denial_without_a_request_id_is_attributed_to_an_intermediary() {
+        let error = from_response(403, "Forbidden", None, "ListInstances");
+        let context = error.context().expect("context");
+        assert!(context.contains("proxy or gateway"));
+        assert!(error.remediation().contains("oraclecloud.com"));
+        assert!(
+            !context.contains("IAM policy"),
+            "must not blame the tenancy policy for a proxy failure"
+        );
+    }
+
+    /// With a request id present the response really did come from OCI, so the
+    /// IAM guidance is correct.
+    /// Wrapped string literals are easy to break: a stray line continuation
+    /// leaves a run of spaces in the middle of a user-facing sentence.
+    #[test]
+    fn messages_contain_no_double_spaces() {
+        let errors = [
+            from_response(403, "Forbidden", None, "ListInstances"),
+            from_response(401, "{}", Some("r".to_owned()), "GetTenancy"),
+            from_response(403, "{}", Some("r".to_owned()), "ListInstances"),
+            from_response(429, "{}", Some("r".to_owned()), "ListShapes"),
+        ];
+        for error in errors {
+            let text = format!(
+                "{}|{}|{}",
+                error.message(),
+                error.context().unwrap_or_default(),
+                error.remediation()
+            );
+            assert!(!text.contains("  "), "double space in: {text}");
+        }
+    }
+
+    #[test]
+    fn a_denial_with_a_request_id_is_attributed_to_oci() {
+        let error = from_response(403, "{}", Some("req-1".to_owned()), "ListInstances");
+        assert!(error.context().expect("context").contains("IAM policy"));
+    }
+
     #[test]
     fn authentication_and_authorization_get_distinct_guidance() {
-        let auth = from_response(401, "{}", None, "GetTenancy");
+        let auth = from_response(401, "{}", Some("req-a".to_owned()), "GetTenancy");
         assert!(auth.remediation().contains("doctor"));
         assert!(auth.context().expect("context").contains("clock"));
 
-        let authz = from_response(403, "{}", None, "ListInstances");
+        let authz = from_response(403, "{}", Some("req-b".to_owned()), "ListInstances");
         assert!(authz.remediation().contains("ListInstances"));
         assert!(authz.context().expect("context").contains("IAM policy"));
     }

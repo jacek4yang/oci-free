@@ -2,7 +2,13 @@
 
 A smart, free-first, safety-focused command-line manager for Oracle Cloud Infrastructure Free Tier accounts.
 
-> Status: early development preview. Configuration loading, OCI request signing, and `oci-free doctor` are implemented; every command that talks to a live OCI endpoint is still a scaffold. The distribution pipeline may be release-ready before the OCI management feature set is complete.
+> Status: early development preview, not v1.
+>
+> **Working today:** signed OCI HTTPS transport, the Free Tier policy engine, and the read commands `doctor`, `account info`, `free list`, and `vm list`.
+>
+> **Not implemented yet:** every write path (`vm create`, `vm delete`, lifecycle, `vm net open`/`close`), the effective-network model (`vm net show`/`audit`), `status`, `cost`, `account limits`/`usage`, `policy explain`, and `config init`. Those commands exit with a clear "not available in this build" error rather than pretending to work.
+>
+> The release and installation pipeline is production-quality; the CLI is not yet. See [Current capability](#current-capability) below.
 
 ## Goals
 
@@ -51,6 +57,28 @@ $ oci-free doctor
 ```
 
 `doctor` exits non-zero when the configuration is not usable and names the next corrective action for every failure. See [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) for the file format, the supported environment variables, and what is redacted from diagnostics.
+
+## Current capability
+
+| Command | State |
+| --- | --- |
+| `oci-free doctor` | Works. Local configuration, key, fingerprint, and signing self-test. Live OCI checks are not implemented. |
+| `oci-free account info` | Works. Tenancy, home region, region subscriptions, availability domains. |
+| `oci-free free list` | Works. Free Tier allowances, live usage, remaining capacity, and blockers. |
+| `oci-free vm list` | Works. Instances with shape, size, Free Tier classification, and managed ownership. |
+| `oci-free status` | Not implemented |
+| `oci-free cost` | Not implemented |
+| `oci-free account limits` / `usage` | Not implemented |
+| `oci-free policy explain` | Not implemented |
+| `oci-free vm info` | Not implemented |
+| `oci-free vm create` / `delete` | Not implemented |
+| `oci-free vm start` / `stop` / `reboot` / `ip` / `ssh` | Not implemented |
+| `oci-free vm net show` / `audit` / `open` / `close` | Not implemented |
+| `oci-free config init` | Not implemented |
+
+Commands marked "not implemented" fail with exit code 1 and an explanatory message. They never print a success-shaped result.
+
+The safety machinery underneath the implemented commands is complete and tested: OCI's per-shape `billingType` is the primary evidence, a dated policy snapshot supplies the allowance sizes the API does not report, and capacity is pooled across flexible-shape instances so that anything unproven fails closed.
 
 ## Installation
 

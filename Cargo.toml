@@ -58,13 +58,6 @@ sha2 = { version = "0.10", features = ["oid"] }
 thiserror = "2.0"
 # Retry jitter only. Not used for anything security-sensitive.
 rand = { version = "0.10", default-features = false, features = ["thread_rng"] }
-# RFC 3339 timestamps for the usage/cost API request window.
-time = { version = "0.3", default-features = false, features = [
-    "std",
-    "formatting",
-    "parsing",
-    "macros",
-] }
 tokio = { version = "1", default-features = false, features = [
     "rt-multi-thread",
     "macros",
