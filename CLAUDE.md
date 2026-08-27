@@ -341,3 +341,67 @@ A first release candidate is useful when a new user with an OCI API key can:
 8. install `oci-free` on all supported platforms from GitHub Releases.
 
 Keep the project English-only: code, comments, identifiers, docs, errors, prompts, commit messages, release notes, and issue/PR text should all be English.
+
+## Agent branch and pull request workflow
+
+This repository uses protected `main` plus external review as the normal development gate. Claude Code, including Claude Code on the web, must follow this workflow for every implementation task unless the user explicitly overrides it.
+
+### Branch discipline
+
+- Treat `main` as protected and read-only.
+- Start each task from the latest `main`.
+- Work only on a dedicated task branch. One task should normally produce one branch and one pull request.
+- Never push directly to `main`.
+- Never force-push `main` or bypass repository rules, required checks, or review gates.
+- Keep changes narrowly scoped. Do not mix unrelated refactors, dependency upgrades, formatting churn, or cleanup into the same pull request.
+- Do not rewrite another agent's or contributor's branch unless explicitly asked.
+
+### Required local validation before handoff
+
+Before declaring implementation complete, run all of the following from the repository root:
+
+```console
+cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-features
+cargo build
+```
+
+If a required check fails because of the task's changes, fix the underlying issue rather than weakening, skipping, or deleting the check. If a failure is unrelated to the task, document it explicitly in the pull request instead of silently ignoring it.
+
+### Pull request handoff
+
+When the task is ready for review:
+
+1. push the task branch;
+2. open a pull request targeting `main`;
+3. use a concise English title that describes the resulting change;
+4. summarize the implementation, relevant design decisions, tests run, safety impact, and any known limitations;
+5. keep the pull request open for external review;
+6. do not merge the pull request yourself;
+7. do not self-approve as a substitute for external review.
+
+The repository's required GitHub Actions checks are authoritative. A task is not ready to merge while a required check is pending or failing.
+
+### Review and auto-fix loop
+
+When CI fails or an external reviewer requests changes:
+
+- inspect the failure or review comment before editing;
+- make the smallest correct fix on the existing pull request branch;
+- do not broaden scope merely because additional cleanup is convenient;
+- rerun the required local checks before pushing;
+- push the fix to the same pull request and leave it open for re-review;
+- address review threads substantively before marking them resolved;
+- if a requested change conflicts with this contract, a hard safety invariant, or requires a product/design decision, stop and ask the user instead of guessing.
+
+Claude Code Web auto-fix may respond to CI failures and review feedback, but it must obey the same scope, validation, and no-merge rules.
+
+### Secrets and live OCI access in agent environments
+
+- Do not request, commit, or persist OCI private keys, GitHub tokens, or other long-lived credentials in the repository.
+- Do not add secrets to test fixtures, logs, pull request text, or diagnostics.
+- Normal CI must remain credential-free and must not perform destructive live OCI operations.
+- Live OCI tests, when introduced, must be explicitly opt-in and read-only unless the user deliberately authorizes a separate controlled test environment.
+
+The intended responsibility split is: Claude Code implements and updates the pull request; GitHub Actions validates it; an external reviewer reviews and merges it.
