@@ -147,8 +147,7 @@
               Uncomment the following `ComponentRef` tag to add the license
               sidecar file to the installer.
             -->
-            <!--<ComponentRef Id='License'/>
--->
+            <!--<ComponentRef Id='License'/>-->
 
             <ComponentRef Id='binary0'/>
 
@@ -171,8 +170,7 @@
           The product icon is the graphic that appears in the Add/Remove
           Programs control panel for the application.
         -->
-        <!--<Icon Id='ProductICO' SourceFile='wix\Product.ico'/>
--->
+        <!--<Icon Id='ProductICO' SourceFile='wix\Product.ico'/>-->
         <!--<Property Id='ARPPRODUCTICON' Value='ProductICO' />-->
 
         <Property Id='ARPHELPLINK' Value='https://github.com/jacek4yang/oci-free'/>
@@ -198,11 +196,10 @@
         
         <!--
           Enabling the EULA dialog in the installer requires uncommenting
-          the following `WixVariable` tag and changing the `Value`
+          the following `WixUILicenseRTF` tag and changing the `Value`
           attribute.
         -->
-        <!-- <WixVariable Id='WixUILicenseRtf' Value='Relative\Path\to\Eula.rtf'/>
- -->
+        <!-- <WixVariable Id='WixUILicenseRtf' Value='Relative\Path\to\Eula.rtf'/> -->
 
         
         <!--
@@ -213,20 +210,18 @@
 
           The banner BMP dimensions are 493 x 58 pixels.
         -->
-        <!--<WixVariable Id='WixUIBannerBmp' Value='wix\Banner.bmp'/>
--->
+        <!--<WixVariable Id='WixUIBannerBmp' Value='wix\Banner.bmp'/>-->
 
         
         <!--
           Uncomment the next `WixVariable` tag to customize the installer's
           Graphical User Interface (GUI) and add a custom image to the first
-          dialog, or screen. See the WiX Toolset documentation for details
-          about customization.
+          dialog, or screen. See the WiX Toolset documentation for details about
+          customization.
 
           The dialog BMP dimensions are 493 x 312 pixels.
         -->
-        <!--<WixVariable Id='WixUIDialogBmp' Value='wix\Dialog.bmp'/>
--->
+        <!--<WixVariable Id='WixUIDialogBmp' Value='wix\Dialog.bmp'/>-->
 
     </Product>
 
