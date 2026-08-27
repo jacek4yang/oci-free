@@ -1,3 +1,6 @@
+#[cfg(test)]
+pub mod testing;
+
 pub mod auth;
 pub mod commands;
 pub mod config;

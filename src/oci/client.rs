@@ -308,6 +308,73 @@ impl OciClient {
         .await
     }
 
+    /// POST a query whose semantics are read-only.
+    ///
+    /// A few OCI APIs model a *query* as a POST because the filter is too large
+    /// for a query string — `RequestSummarizedUsages` is the one this product
+    /// uses. Such a call changes nothing, so it is classified as a read and may
+    /// be replayed after a transport failure.
+    ///
+    /// Only ever use this for an endpoint Oracle documents as a query. A
+    /// mutation routed through here would be retried without an idempotency
+    /// token, which is exactly what the retry policy exists to prevent.
+    pub async fn post_read_json<B: Serialize, T: DeserializeOwned>(
+        &self,
+        service: Service,
+        path: &str,
+        body: &B,
+        operation: &str,
+    ) -> Result<OciResponse<T>> {
+        let url = self.endpoints.versioned_url(service, path)?;
+        let encoded = serialize_body(body, operation)?;
+        self.send_json(
+            HttpMethod::Post,
+            url,
+            Some(RequestBody {
+                bytes: encoded,
+                retry_token: None,
+            }),
+            RequestKind::Read,
+            operation,
+        )
+        .await
+    }
+
+    /// POST an action that returns no response body.
+    ///
+    /// OCI's `actions/...` endpoints (adding and removing NSG security rules,
+    /// for example) answer 200 with an empty body, which cannot be decoded as
+    /// JSON.
+    pub async fn post_action<B: Serialize>(
+        &self,
+        service: Service,
+        path: &str,
+        body: &B,
+        retry_token: Option<&str>,
+        operation: &str,
+    ) -> Result<Option<String>> {
+        let url = self.endpoints.versioned_url(service, path)?;
+        let encoded = serialize_body(body, operation)?;
+        let kind = if retry_token.is_some() {
+            RequestKind::IdempotentWrite
+        } else {
+            RequestKind::UnsafeWrite
+        };
+        let raw = self
+            .send(
+                HttpMethod::Post,
+                url,
+                Some(RequestBody {
+                    bytes: encoded,
+                    retry_token: retry_token.map(str::to_owned),
+                }),
+                kind,
+                operation,
+            )
+            .await?;
+        Ok(raw.request_id)
+    }
+
     /// PUT a JSON body. PUT is idempotent by definition in the OCI APIs this
     /// product uses, so it is replay-safe without a token.
     pub async fn put_json<B: Serialize, T: DeserializeOwned>(

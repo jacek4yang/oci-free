@@ -5,269 +5,22 @@
 //! `https_only` intact while still exercising signing, retry, pagination,
 //! redirect refusal, body bounds, and error decoding end to end.
 
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-    time::Duration,
-};
+use std::time::Duration;
 
 use serde::Deserialize;
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpListener,
-};
-use tokio_rustls::{TlsAcceptor, rustls::ServerConfig};
+
+use tokio::net::TcpListener;
 
 use super::*;
 use crate::{
     auth::key::{PrivateKey, testing::pkcs8_pem},
-    domain::{ocid::Ocid, region::Region},
+    domain::ocid::Ocid,
+    testing::mock_oci::{MockOci, Reply, TENANCY, USER, fast_retry},
 };
-
-const TENANCY: &str = "ocid1.tenancy.oc1..aaaaaaaaexampletenancyid7xk3q7a";
-const USER: &str = "ocid1.user.oc1..aaaaaaaaexampleuserid4m2p8z";
-
-/// One canned HTTP response the mock server will return.
-#[derive(Clone)]
-struct Reply {
-    status: u16,
-    body: String,
-    headers: Vec<(String, String)>,
-    /// Delay before replying, used to trigger the client's request timeout.
-    delay: Option<Duration>,
-}
-
-impl Reply {
-    fn new(status: u16, body: &str) -> Self {
-        Self {
-            status,
-            body: body.to_owned(),
-            headers: Vec::new(),
-            delay: None,
-        }
-    }
-
-    fn ok(body: &str) -> Self {
-        Self::new(200, body)
-    }
-
-    fn header(mut self, name: &str, value: &str) -> Self {
-        self.headers.push((name.to_owned(), value.to_owned()));
-        self
-    }
-
-    fn delayed(mut self, delay: Duration) -> Self {
-        self.delay = Some(delay);
-        self
-    }
-}
-
-/// Records what the client sent, so tests can assert on signing.
-#[derive(Debug, Clone, Default)]
-struct CapturedRequest {
-    request_line: String,
-    headers: Vec<(String, String)>,
-}
-
-impl CapturedRequest {
-    fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .iter()
-            .find(|(key, _)| key.eq_ignore_ascii_case(name))
-            .map(|(_, value)| value.as_str())
-    }
-}
-
-/// An in-process HTTPS server that replays a fixed script of replies.
-struct MockOci {
-    port: u16,
-    certificate_der: Vec<u8>,
-    requests: Arc<std::sync::Mutex<Vec<CapturedRequest>>>,
-    served: Arc<AtomicUsize>,
-}
-
-impl MockOci {
-    /// Start a server that answers with `replies` in order, repeating the last
-    /// entry once the script is exhausted.
-    async fn start(replies: Vec<Reply>) -> Self {
-        // The transport connects by IP, so the certificate must carry 127.0.0.1
-        // as a subject alternative name or rustls rejects the handshake.
-        let certificate = rcgen::generate_simple_self_signed(vec![
-            "127.0.0.1".to_owned(),
-            "localhost".to_owned(),
-        ])
-        .expect("certificate");
-        let certificate_der = certificate.cert.der().to_vec();
-        let key_der = certificate.signing_key.serialize_der();
-
-        let config = ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(
-                vec![certificate.cert.der().clone()],
-                tokio_rustls::rustls::pki_types::PrivateKeyDer::Pkcs8(key_der.into()),
-            )
-            .expect("server config");
-        let acceptor = TlsAcceptor::from(Arc::new(config));
-
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
-        let port = listener.local_addr().expect("addr").port();
-
-        let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let served = Arc::new(AtomicUsize::new(0));
-
-        let task_requests = Arc::clone(&requests);
-        let task_served = Arc::clone(&served);
-        tokio::spawn(async move {
-            loop {
-                let Ok((stream, _)) = listener.accept().await else {
-                    return;
-                };
-                let acceptor = acceptor.clone();
-                let replies = replies.clone();
-                let requests = Arc::clone(&task_requests);
-                let served = Arc::clone(&task_served);
-                tokio::spawn(async move {
-                    let Ok(mut tls) = acceptor.accept(stream).await else {
-                        return;
-                    };
-
-                    // Read just the head; every request in these tests is small
-                    // enough that the head arrives in the first reads.
-                    let mut buffer = Vec::new();
-                    let mut chunk = [0u8; 2048];
-                    loop {
-                        let Ok(read) = tls.read(&mut chunk).await else {
-                            return;
-                        };
-                        if read == 0 {
-                            break;
-                        }
-                        buffer.extend_from_slice(&chunk[..read]);
-                        if buffer.windows(4).any(|w| w == b"\r\n\r\n") {
-                            break;
-                        }
-                    }
-
-                    let text = String::from_utf8_lossy(&buffer).to_string();
-                    let mut lines = text.lines();
-                    let request_line = lines.next().unwrap_or_default().to_owned();
-                    let headers = lines
-                        .take_while(|line| !line.is_empty())
-                        .filter_map(|line| {
-                            line.split_once(':')
-                                .map(|(k, v)| (k.trim().to_owned(), v.trim().to_owned()))
-                        })
-                        .collect();
-                    requests.lock().expect("lock").push(CapturedRequest {
-                        request_line,
-                        headers,
-                    });
-
-                    let index = served.fetch_add(1, Ordering::SeqCst);
-                    let reply = replies
-                        .get(index)
-                        .or_else(|| replies.last())
-                        .cloned()
-                        .unwrap_or_else(|| Reply::ok("{}"));
-
-                    if let Some(delay) = reply.delay {
-                        tokio::time::sleep(delay).await;
-                    }
-
-                    let mut response = format!(
-                        "HTTP/1.1 {} X\r\nContent-Length: {}\r\nConnection: close\r\n",
-                        reply.status,
-                        reply.body.len()
-                    );
-                    for (name, value) in &reply.headers {
-                        response.push_str(&format!("{name}: {value}\r\n"));
-                    }
-                    response.push_str("\r\n");
-                    response.push_str(&reply.body);
-
-                    let _ = tls.write_all(response.as_bytes()).await;
-                    let _ = tls.flush().await;
-                });
-            }
-        });
-
-        Self {
-            port,
-            certificate_der,
-            requests,
-            served,
-        }
-    }
-
-    fn attempts(&self) -> usize {
-        self.served.load(Ordering::SeqCst)
-    }
-
-    fn request(&self, index: usize) -> CapturedRequest {
-        self.requests
-            .lock()
-            .expect("lock")
-            .get(index)
-            .cloned()
-            .unwrap_or_default()
-    }
-
-    /// A client pointed at this server.
-    ///
-    /// The endpoint resolver produces real OCI hostnames, so the region is set
-    /// to a literal that resolves to the loopback listener instead.
-    fn client(&self, retry: RetryPolicy, limits: TransportLimits) -> OciClient {
-        let key = PrivateKey::from_pem(&pkcs8_pem()).expect("key");
-        let signer = RequestSigner::new(
-            &TENANCY.parse::<Ocid>().expect("tenancy"),
-            &USER.parse::<Ocid>().expect("user"),
-            key,
-        );
-        let endpoints = TestEndpoints::resolver(self.port);
-        OciClient::with_extra_roots(
-            signer,
-            endpoints,
-            limits,
-            retry,
-            vec![self.certificate_der.clone()],
-        )
-        .expect("client")
-    }
-}
-
-/// Builds an [`EndpointResolver`] that points at `127.0.0.1:port`.
-struct TestEndpoints;
-
-impl TestEndpoints {
-    fn resolver(port: u16) -> EndpointResolver {
-        // `EndpointResolver` formats `{service}.{region}.{domain}`. Encoding the
-        // loopback address and port in the region makes every service resolve
-        // to the mock server without weakening the production code path.
-        let region: Region = format!("x-127-0-0-1-{port}")
-            .parse()
-            .expect("synthetic test region");
-        let mut resolver =
-            EndpointResolver::new(&TENANCY.parse::<Ocid>().expect("tenancy"), region)
-                .expect("resolver");
-        resolver.override_authority_for_tests(&format!("127.0.0.1:{port}"));
-        resolver
-    }
-}
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 struct Widget {
     id: String,
-}
-
-fn fast_retry() -> RetryPolicy {
-    RetryPolicy {
-        max_attempts: 3,
-        base_delay: Duration::from_millis(1),
-        max_delay: Duration::from_millis(5),
-        max_total_delay: Duration::from_millis(200),
-    }
 }
 
 #[tokio::test]
@@ -276,7 +29,7 @@ async fn signs_and_decodes_a_successful_get() {
         Reply::ok(r#"{"id":"widget-1"}"#).header("opc-request-id", "req-abc"),
     ])
     .await;
-    let client = mock.client(fast_retry(), TransportLimits::default());
+    let client = mock.client_with(fast_retry(), TransportLimits::default());
 
     let response: OciResponse<Widget> = client
         .get_json(Service::Core, "/widgets/1", "GetWidget")
@@ -307,7 +60,7 @@ async fn walks_every_page() {
         Reply::ok(r#"[{"id":"c"}]"#),
     ])
     .await;
-    let client = mock.client(fast_retry(), TransportLimits::default());
+    let client = mock.client_with(fast_retry(), TransportLimits::default());
 
     let widgets: Vec<Widget> = client
         .list_all(Service::Core, "/widgets", "ListWidgets")
@@ -335,7 +88,7 @@ async fn an_empty_cursor_ends_pagination() {
         Reply::ok(r#"[{"id":"unreachable"}]"#),
     ])
     .await;
-    let client = mock.client(fast_retry(), TransportLimits::default());
+    let client = mock.client_with(fast_retry(), TransportLimits::default());
 
     let widgets: Vec<Widget> = client
         .list_all(Service::Core, "/widgets", "ListWidgets")
@@ -352,7 +105,7 @@ async fn a_failing_later_page_surfaces_the_error() {
         Reply::new(403, r#"{"code":"NotAuthorized","message":"denied"}"#),
     ])
     .await;
-    let client = mock.client(fast_retry(), TransportLimits::default());
+    let client = mock.client_with(fast_retry(), TransportLimits::default());
 
     let error = client
         .list_all::<Widget>(Service::Core, "/widgets", "ListWidgets")
@@ -372,7 +125,7 @@ async fn a_runaway_cursor_is_bounded() {
         max_pages: 4,
         ..TransportLimits::default()
     };
-    let client = mock.client(fast_retry(), limits);
+    let client = mock.client_with(fast_retry(), limits);
 
     let error = client
         .list_all::<Widget>(Service::Core, "/widgets", "ListWidgets")
@@ -398,7 +151,7 @@ async fn status_codes_map_to_error_categories() {
                 .header("opc-request-id", "req-99"),
         ])
         .await;
-        let client = mock.client(fast_retry(), TransportLimits::default());
+        let client = mock.client_with(fast_retry(), TransportLimits::default());
 
         let error = client
             .get_json::<Widget>(Service::Core, "/widgets/1", "GetWidget")
@@ -416,7 +169,7 @@ async fn status_codes_map_to_error_categories() {
 async fn transient_server_errors_are_retried_then_surface() {
     for status in [500, 502, 503, 504] {
         let mock = MockOci::start(vec![Reply::new(status, r#"{"message":"later"}"#)]).await;
-        let client = mock.client(fast_retry(), TransportLimits::default());
+        let client = mock.client_with(fast_retry(), TransportLimits::default());
 
         let error = client
             .get_json::<Widget>(Service::Core, "/widgets/1", "GetWidget")
@@ -439,7 +192,7 @@ async fn a_retried_read_that_recovers_succeeds() {
         Reply::ok(r#"{"id":"widget-1"}"#),
     ])
     .await;
-    let client = mock.client(fast_retry(), TransportLimits::default());
+    let client = mock.client_with(fast_retry(), TransportLimits::default());
 
     let response: OciResponse<Widget> = client
         .get_json(Service::Core, "/widgets/1", "GetWidget")
@@ -463,7 +216,7 @@ async fn throttling_is_retried_and_honours_retry_after() {
         max_delay: Duration::from_millis(20),
         max_total_delay: Duration::from_millis(500),
     };
-    let client = mock.client(retry, TransportLimits::default());
+    let client = mock.client_with(retry, TransportLimits::default());
 
     let response: OciResponse<Widget> = client
         .get_json(Service::Core, "/widgets/1", "GetWidget")
@@ -477,7 +230,7 @@ async fn throttling_is_retried_and_honours_retry_after() {
 #[tokio::test]
 async fn unsafe_writes_are_not_retried() {
     let mock = MockOci::start(vec![Reply::new(503, r#"{"message":"later"}"#)]).await;
-    let client = mock.client(fast_retry(), TransportLimits::default());
+    let client = mock.client_with(fast_retry(), TransportLimits::default());
 
     let error = client
         .post_json::<_, Widget>(
@@ -506,7 +259,7 @@ async fn writes_with_a_retry_token_are_retried_and_send_the_token() {
         Reply::ok(r#"{"id":"widget-1"}"#),
     ])
     .await;
-    let client = mock.client(fast_retry(), TransportLimits::default());
+    let client = mock.client_with(fast_retry(), TransportLimits::default());
 
     let response: OciResponse<Widget> = client
         .post_json(
@@ -529,7 +282,7 @@ async fn writes_with_a_retry_token_are_retried_and_send_the_token() {
 #[tokio::test]
 async fn post_signs_the_content_headers() {
     let mock = MockOci::start(vec![Reply::ok(r#"{"id":"widget-1"}"#)]).await;
-    let client = mock.client(fast_retry(), TransportLimits::default());
+    let client = mock.client_with(fast_retry(), TransportLimits::default());
 
     let _: OciResponse<Widget> = client
         .post_json(
@@ -558,7 +311,7 @@ async fn redirects_are_refused_rather_than_followed() {
         Reply::new(302, "").header("location", "https://attacker.example/steal"),
     ])
     .await;
-    let client = mock.client(fast_retry(), TransportLimits::default());
+    let client = mock.client_with(fast_retry(), TransportLimits::default());
 
     let error = client
         .get_json::<Widget>(Service::Core, "/widgets/1", "GetWidget")
@@ -583,7 +336,7 @@ async fn redirects_are_refused_rather_than_followed() {
 #[tokio::test]
 async fn malformed_json_is_reported_not_panicked() {
     let mock = MockOci::start(vec![Reply::ok("{ this is not json")]).await;
-    let client = mock.client(fast_retry(), TransportLimits::default());
+    let client = mock.client_with(fast_retry(), TransportLimits::default());
 
     let error = client
         .get_json::<Widget>(Service::Core, "/widgets/1", "GetWidget")
@@ -601,7 +354,7 @@ async fn oversized_bodies_are_rejected() {
         max_response_bytes: 512,
         ..TransportLimits::default()
     };
-    let client = mock.client(fast_retry(), limits);
+    let client = mock.client_with(fast_retry(), limits);
 
     let error = client
         .get_json::<Widget>(Service::Core, "/widgets/1", "GetWidget")
@@ -626,7 +379,7 @@ async fn a_slow_response_times_out() {
         max_attempts: 1,
         ..fast_retry()
     };
-    let client = mock.client(retry, limits);
+    let client = mock.client_with(retry, limits);
 
     let error = client
         .get_json::<Widget>(Service::Core, "/widgets/1", "GetWidget")
@@ -651,7 +404,7 @@ async fn connection_failures_are_classified_as_network_errors() {
 
     let client = OciClient::with_parts(
         signer,
-        TestEndpoints::resolver(port),
+        crate::testing::mock_oci::test_resolver(port),
         TransportLimits::default(),
         RetryPolicy {
             max_attempts: 1,
@@ -676,7 +429,7 @@ async fn errors_never_leak_the_authorization_header() {
         r#"{"code":"Boom","message":"internal"}"#,
     )])
     .await;
-    let client = mock.client(
+    let client = mock.client_with(
         RetryPolicy {
             max_attempts: 1,
             ..fast_retry()

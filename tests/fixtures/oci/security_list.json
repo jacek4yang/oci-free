@@ -1,0 +1,27 @@
+{
+  "id": "ocid1.securitylist.oc1.iad.aaaaaaaaexamplesl1",
+  "vcnId": "ocid1.vcn.oc1.iad.aaaaaaaaexamplevcn1",
+  "compartmentId": "ocid1.tenancy.oc1..aaaaaaaaexampletenancyid7xk3q7a",
+  "displayName": "Default Security List for oci-free-vcn",
+  "lifecycleState": "AVAILABLE",
+  "ingressSecurityRules": [
+    {
+      "protocol": "6",
+      "source": "0.0.0.0/0",
+      "sourceType": "CIDR_BLOCK",
+      "isStateless": false,
+      "tcpOptions": { "destinationPortRange": { "min": 22, "max": 22 } },
+      "description": "default subnet-wide SSH"
+    },
+    {
+      "protocol": "1",
+      "source": "0.0.0.0/0",
+      "sourceType": "CIDR_BLOCK",
+      "isStateless": false,
+      "icmpOptions": { "type": 3, "code": 4 }
+    }
+  ],
+  "egressSecurityRules": [
+    { "protocol": "all", "destination": "0.0.0.0/0", "isStateless": false }
+  ]
+}

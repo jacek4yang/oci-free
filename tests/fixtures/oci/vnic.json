@@ -1,0 +1,18 @@
+{
+  "id": "ocid1.vnic.oc1.iad.abuwcljrexamplevnic1",
+  "compartmentId": "ocid1.tenancy.oc1..aaaaaaaaexampletenancyid7xk3q7a",
+  "displayName": "free-arm-1 primary vnic",
+  "subnetId": "ocid1.subnet.oc1.iad.aaaaaaaaexamplesubnet1",
+  "privateIp": "10.0.0.42",
+  "publicIp": "203.0.113.17",
+  "isPrimary": true,
+  "nsgIds": ["ocid1.networksecuritygroup.oc1.iad.aaaaaaaaexamplensg1"],
+  "hostnameLabel": "free-arm-1",
+  "availabilityDomain": "Uocm:US-ASHBURN-AD-1",
+  "lifecycleState": "AVAILABLE",
+  "timeCreated": "2026-02-01T09:15:00.000Z",
+  "freeformTags": {
+    "oci-free:managed": "1",
+    "oci-free:instance": "ocid1.instance.oc1.iad.anuwcljtexampleinstance1"
+  }
+}

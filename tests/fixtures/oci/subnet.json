@@ -1,0 +1,14 @@
+{
+  "id": "ocid1.subnet.oc1.iad.aaaaaaaaexamplesubnet1",
+  "vcnId": "ocid1.vcn.oc1.iad.aaaaaaaaexamplevcn1",
+  "compartmentId": "ocid1.tenancy.oc1..aaaaaaaaexampletenancyid7xk3q7a",
+  "displayName": "oci-free-public-subnet",
+  "cidrBlock": "10.0.0.0/24",
+  "routeTableId": "ocid1.routetable.oc1.iad.aaaaaaaaexamplert1",
+  "securityListIds": ["ocid1.securitylist.oc1.iad.aaaaaaaaexamplesl1"],
+  "prohibitPublicIpOnVnic": false,
+  "prohibitInternetIngress": false,
+  "dhcpOptionsId": "ocid1.dhcpoptions.oc1.iad.aaaaaaaaexampledhcp1",
+  "lifecycleState": "AVAILABLE",
+  "freeformTags": { "oci-free:managed": "1" }
+}

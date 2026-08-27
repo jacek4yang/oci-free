@@ -1,0 +1,12 @@
+{
+  "id": "ocid1.networksecuritygroup.oc1.iad.aaaaaaaaexamplensg1",
+  "compartmentId": "ocid1.tenancy.oc1..aaaaaaaaexampletenancyid7xk3q7a",
+  "vcnId": "ocid1.vcn.oc1.iad.aaaaaaaaexamplevcn1",
+  "displayName": "oci-free-free-arm-1",
+  "lifecycleState": "AVAILABLE",
+  "freeformTags": {
+    "oci-free:managed": "1",
+    "oci-free:instance": "ocid1.instance.oc1.iad.anuwcljtexampleinstance1",
+    "oci-free:role": "instance-nsg"
+  }
+}
