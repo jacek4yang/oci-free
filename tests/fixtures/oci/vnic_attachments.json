@@ -1,0 +1,12 @@
+[
+  {
+    "id": "ocid1.vnicattachment.oc1.iad.aaaaaaaaattachment1",
+    "instanceId": "ocid1.instance.oc1.iad.aaaaaaaarunninginstance1",
+    "compartmentId": "ocid1.tenancy.oc1..aaaaaaaaexampletenancyid7xk3q7a",
+    "vnicId": "ocid1.vnic.oc1.iad.aaaaaaaavnic1",
+    "subnetId": "ocid1.subnet.oc1.iad.aaaaaaaasubnet1",
+    "availabilityDomain": "Uocm:US-ASHBURN-AD-1",
+    "lifecycleState": "ATTACHED",
+    "nicIndex": 0
+  }
+]

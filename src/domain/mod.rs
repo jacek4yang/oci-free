@@ -1,3 +1,4 @@
+pub mod capacity;
 pub mod fingerprint;
 pub mod free;
 pub mod network;

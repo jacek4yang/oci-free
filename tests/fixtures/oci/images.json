@@ -1,0 +1,28 @@
+[
+  {
+    "id": "ocid1.image.oc1.iad.aaaaaaaaoraclelinux9",
+    "displayName": "Oracle-Linux-9.5-aarch64-2026.01.31-0",
+    "operatingSystem": "Oracle Linux",
+    "operatingSystemVersion": "9",
+    "lifecycleState": "AVAILABLE",
+    "timeCreated": "2026-01-31T00:00:00.000Z",
+    "sizeInMBs": 47694
+  },
+  {
+    "id": "ocid1.image.oc1.iad.aaaaaaaaoraclelinux8",
+    "displayName": "Oracle-Linux-8.10-aarch64-2025.12.20-0",
+    "operatingSystem": "Oracle Linux",
+    "operatingSystemVersion": "8",
+    "lifecycleState": "AVAILABLE",
+    "timeCreated": "2025-12-20T00:00:00.000Z",
+    "sizeInMBs": 47694
+  },
+  {
+    "id": "ocid1.image.oc1.iad.aaaaaaaaubuntu2404",
+    "displayName": "Canonical-Ubuntu-24.04-aarch64-2025-11-15-0",
+    "operatingSystem": "Canonical Ubuntu",
+    "operatingSystemVersion": "24.04",
+    "lifecycleState": "AVAILABLE",
+    "timeCreated": "2025-11-15T00:00:00.000Z"
+  }
+]

@@ -1,0 +1,43 @@
+[
+  {
+    "shape": "VM.Standard.A1.Flex",
+    "billingType": "ALWAYS_FREE",
+    "processorDescription": "2.8 GHz Ampere Altra",
+    "ocpus": 1.0,
+    "memoryInGBs": 6.0,
+    "isFlexible": true,
+    "ocpuOptions": { "min": 1.0, "max": 80.0 },
+    "memoryOptions": {
+      "minInGBs": 1.0,
+      "maxInGBs": 512.0,
+      "minPerOcpuInGBs": 1.0,
+      "maxPerOcpuInGBs": 64.0
+    },
+    "isBilledForStoppedInstance": false,
+    "quotaNames": ["standard-a1-core-count"]
+  },
+  {
+    "shape": "VM.Standard.E2.1.Micro",
+    "billingType": "ALWAYS_FREE",
+    "processorDescription": "2.0 GHz AMD EPYC 7551",
+    "ocpus": 1.0,
+    "memoryInGBs": 1.0,
+    "isFlexible": false,
+    "isBilledForStoppedInstance": false
+  },
+  {
+    "shape": "VM.Standard3.Flex",
+    "billingType": "PAID",
+    "processorDescription": "Intel Xeon Platinum 8358",
+    "ocpus": 1.0,
+    "memoryInGBs": 16.0,
+    "isFlexible": true,
+    "ocpuOptions": { "min": 1.0, "max": 32.0 },
+    "memoryOptions": {
+      "minInGBs": 1.0,
+      "maxInGBs": 512.0,
+      "minPerOcpuInGBs": 1.0,
+      "maxPerOcpuInGBs": 64.0
+    }
+  }
+]

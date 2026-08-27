@@ -1,0 +1,8 @@
+{
+  "id": "ocid1.tenancy.oc1..aaaaaaaaexampletenancyid7xk3q7a",
+  "name": "example-tenancy",
+  "description": "Example Free Tier tenancy",
+  "homeRegionKey": "IAD",
+  "freeformTags": {},
+  "definedTags": {}
+}
