@@ -1,3 +1,4 @@
+pub mod audit;
 pub mod capacity;
 pub mod cidr;
 pub mod exposure;

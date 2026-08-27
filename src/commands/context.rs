@@ -8,9 +8,9 @@
 use crate::{
     auth::PrivateKey,
     config::{Config, ConfigOptions, Environment},
-    domain::ocid::Ocid,
+    domain::{ocid::Ocid, region::Region},
     error::{Error, ErrorKind, Result},
-    oci::client::OciClient,
+    oci::{client::OciClient, identity::IdentityApi},
     policy::{engine::PolicyEngine, snapshot::PolicySnapshot},
 };
 
@@ -19,6 +19,8 @@ pub struct CommandContext {
     config: Config,
     client: OciClient,
     policy: PolicyEngine,
+    /// Whether a prompt can reach a human.
+    interactive: bool,
 }
 
 impl std::fmt::Debug for CommandContext {
@@ -52,6 +54,7 @@ impl CommandContext {
             config,
             client,
             policy,
+            interactive: crate::interactive::stdin_is_a_terminal(),
         })
     }
 
@@ -78,5 +81,88 @@ impl CommandContext {
     #[must_use]
     pub fn tenancy(&self) -> &Ocid {
         &self.config.tenancy
+    }
+
+    /// The region this context talks to.
+    #[must_use]
+    pub fn region(&self) -> &Region {
+        &self.config.region
+    }
+
+    /// Whether interactive prompting is possible.
+    ///
+    /// False under a pipe, in CI, or when `--yes` made the run explicit. A
+    /// command that cannot prompt must fail with a specific error rather than
+    /// blocking on a stdin that will never arrive.
+    #[must_use]
+    pub fn is_interactive(&self) -> bool {
+        self.interactive
+    }
+
+    /// Turn interactive prompting off, for a non-interactive run.
+    #[must_use]
+    pub fn non_interactive(mut self) -> Self {
+        self.interactive = false;
+        self
+    }
+
+    /// A context pointed at the tenancy's home region.
+    ///
+    /// Always Free capacity lives in the home region, so every write path
+    /// resolves it from live subscription data rather than trusting whatever
+    /// region the configuration happens to name.
+    pub async fn in_home_region(&self) -> Result<Self> {
+        let home = IdentityApi::new(&self.client)
+            .home_region(&self.config.tenancy)
+            .await?;
+        Ok(self.switch_region(home))
+    }
+
+    /// The same context pointed at another region in the same realm.
+    #[must_use]
+    pub fn switch_region(&self, region: Region) -> Self {
+        let mut config = self.config.clone();
+        config.region = region.clone();
+        Self {
+            client: self.client.in_region(region),
+            config,
+            policy: PolicyEngine::new(self.policy.snapshot().clone()),
+            interactive: self.interactive,
+        }
+    }
+
+    /// Build a context around an already-constructed client.
+    ///
+    /// Test-only: it is how a command test points the whole command stack at
+    /// the in-process mock server.
+    #[cfg(test)]
+    pub fn for_tests(client: OciClient, region: &str) -> Self {
+        use std::path::PathBuf;
+
+        use crate::{
+            config::ConfigOrigin,
+            domain::fingerprint::Fingerprint,
+            testing::mock_oci::{TENANCY, USER},
+        };
+
+        let config = Config {
+            user: USER.parse().expect("user"),
+            tenancy: TENANCY.parse().expect("tenancy"),
+            fingerprint: Fingerprint::from_digest([0u8; 16]),
+            region: region.parse().expect("region"),
+            key_file: PathBuf::from("/nonexistent/oci_api_key.pem"),
+            pass_phrase: None,
+            origin: ConfigOrigin {
+                file: None,
+                profile: "DEFAULT".to_owned(),
+                env_overrides: Vec::new(),
+            },
+        };
+        Self {
+            config,
+            client,
+            policy: PolicyEngine::new(PolicySnapshot::load().expect("snapshot")),
+            interactive: false,
+        }
     }
 }
