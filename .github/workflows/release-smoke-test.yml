@@ -79,7 +79,10 @@ jobs:
           test -f "$archive"
           test -f "$archive.sha256"
           ( cd target/distrib && shasum -a 256 -c "oci-free-${{ matrix.target }}.tar.xz.sha256" )
-          actual="$(tar -tf "$archive" | sed 's#^oci-free-${{ matrix.target }}/##' | grep -v '^$' | sort | tr '\n' ' ')"
+          # LC_ALL=C pins the collation. Some macOS runners default to a
+          # case-insensitive locale that orders `oci-free` before `README.md`,
+          # so an unpinned `sort` is not portable across the build matrix.
+          actual="$(tar -tf "$archive" | sed 's#^oci-free-${{ matrix.target }}/##' | grep -v '^$' | LC_ALL=C sort | tr '\n' ' ')"
           expected="LICENSE README.md oci-free "
           if [ "$actual" != "$expected" ]; then
             echo "unexpected archive contents: [$actual]"
@@ -155,10 +158,16 @@ jobs:
           if ($expected -ne $actual) { throw "checksum mismatch for $zip" }
           Remove-Item -Recurse -Force zipcheck -ErrorAction SilentlyContinue
           Expand-Archive -Path $zip -DestinationPath zipcheck
-          $names = Get-ChildItem zipcheck -Recurse -File | ForEach-Object { $_.Name } | Sort-Object
+          # Compare as a set. PowerShell's Sort-Object is culture-aware and
+          # case-insensitive, so it orders `oci-free.exe` before `README.md`;
+          # comparing joined sorted lists is not portable. Compare-Object
+          # reports both missing and unexpected entries regardless of order.
+          $names = @(Get-ChildItem zipcheck -Recurse -File | ForEach-Object { $_.Name })
           $expectedNames = @('LICENSE', 'README.md', 'oci-free.exe')
-          if (($names -join ' ') -ne ($expectedNames -join ' ')) {
-            throw "unexpected archive contents: $($names -join ' ')"
+          $difference = Compare-Object -ReferenceObject $expectedNames -DifferenceObject $names
+          if ($difference) {
+            $found = ($names | Sort-Object) -join ', '
+            throw "unexpected archive contents: expected [$($expectedNames -join ', ')], found [$found]"
           }
 
       - name: Install the MSI non-interactively
