@@ -130,7 +130,7 @@ Not yet done: validation against a live OCI tenancy. See
 For a published version, download and run the version-pinned installer:
 
 ```console
-VERSION=v0.1.0-preview.1
+VERSION=v1.0.0
 curl --proto '=https' --tlsv1.2 -LsSf "https://github.com/jacek4yang/oci-free/releases/download/${VERSION}/oci-free-installer.sh" | sh
 ```
 
@@ -139,7 +139,7 @@ curl --proto '=https' --tlsv1.2 -LsSf "https://github.com/jacek4yang/oci-free/re
 For a published version, use the version-pinned PowerShell installer:
 
 ```powershell
-$Version = "v0.1.0-preview.1"
+$Version = "v1.0.0"
 irm "https://github.com/jacek4yang/oci-free/releases/download/$Version/oci-free-installer.ps1" | iex
 ```
 

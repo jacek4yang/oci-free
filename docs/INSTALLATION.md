@@ -34,7 +34,7 @@ use `oci-free-aarch64-unknown-linux-gnu.tar.xz` there.
 ### macOS and Linux
 
 ```console
-VERSION=v0.1.0-preview.1
+VERSION=v1.0.0
 curl --proto '=https' --tlsv1.2 -LsSf "https://github.com/jacek4yang/oci-free/releases/download/${VERSION}/oci-free-installer.sh" | sh
 ```
 
@@ -50,7 +50,7 @@ oci-free --version
 To install another specific version, change `VERSION` (or use that tag directly):
 
 ```console
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/jacek4yang/oci-free/releases/download/v0.1.0/oci-free-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/jacek4yang/oci-free/releases/download/v1.0.0/oci-free-installer.sh | sh
 ```
 
 Useful environment variables:
@@ -63,7 +63,7 @@ Useful environment variables:
 ### Windows
 
 ```console
-$Version = "v0.1.0-preview.1"
+$Version = "v1.0.0"
 irm "https://github.com/jacek4yang/oci-free/releases/download/$Version/oci-free-installer.ps1" | iex
 ```
 

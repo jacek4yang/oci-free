@@ -77,19 +77,26 @@ Release infrastructure is testable before any tag exists.
 
 ## Versioning and prerelease policy
 
-The v1 command surface is implemented and covered by tests, but it has not yet
-been validated against a live OCI tenancy. Releases must not imply otherwise.
+The package is versioned `1.0.0`: the v1 command surface is implemented, the
+JSON contract and exit codes are stable, and the offline suite covers them.
 
-| Tag | Meaning | Use while… |
-| --- | --- | --- |
-| `v1.0.0-rc.1` | Release candidate | the commands exist and the offline suite is green, but the live checklist has not been completed — **this is where the project is today** |
-| `v1.0.0` | Stable | [`LIVE-VALIDATION.md`](LIVE-VALIDATION.md) has been worked through against a real Free Tier tenancy and the results recorded |
+**The `v1.0.0` tag must not be pushed until
+[`LIVE-VALIDATION.md`](LIVE-VALIDATION.md) has been worked through against a
+real Free Tier tenancy and the results recorded.** A stable tag makes the
+`releases/latest` installer URLs point at that build, and a binary that can
+create and delete cloud resources but has never made a real API call is not
+something to put behind `latest`.
 
-cargo-dist marks any tag with a prerelease suffix as a GitHub prerelease
-automatically, which keeps it out of `releases/latest`. **Do not cut a stable
-tag before the live checklist is complete.** A stable tag makes the `latest`
-installer URLs point at that build, and an unvalidated binary that can create
-and delete cloud resources is not something to put behind `latest`.
+If a build is wanted before that, cut a prerelease instead: set the version to
+`1.0.0-rc.1`, which cargo-dist marks as a GitHub prerelease and keeps out of
+`releases/latest`. The version in `Cargo.toml` and the tag must match, which the
+release smoke test verifies by comparing `oci-free --version` against
+`Cargo.toml`.
+
+| Version and tag | Meaning |
+| --- | --- |
+| `1.0.0-rc.1` | Release candidate: the commands exist and the offline suite is green, the live checklist is not complete. |
+| `1.0.0` | Stable: the live checklist has been completed and recorded. |
 
 ## Cutting a release
 
@@ -129,8 +136,8 @@ step.
 
    ```console
    git checkout main && git pull
-   git tag v0.1.0-preview.1
-   git push origin v0.1.0-preview.1
+   git tag v1.0.0
+   git push origin v1.0.0
    ```
 
 7. **Watch the release run** in the Actions tab. If a platform fails, the

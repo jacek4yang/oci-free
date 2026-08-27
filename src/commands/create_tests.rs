@@ -511,6 +511,61 @@ async fn a_failed_launch_compensates_only_what_it_created() {
     );
 }
 
+/// A failure while building the managed network must remove the VCN and gateway
+/// this operation created — and nothing else, since nothing else existed yet.
+#[tokio::test]
+async fn a_failure_building_the_network_compensates_the_objects_already_created() {
+    let mock = scenario(json!([]))
+        // No managed VCN exists, so one has to be built.
+        .override_reply("GET", "/vcns", Reply::json(&json!([])))
+        .reply("POST", "/vcns", Reply::json(&vcn_json()))
+        .reply("POST", "/internetGateways", Reply::json(&gateway_json()))
+        .reply("PUT", "/routeTables/", Reply::json(&route_table_json()))
+        // The subnet is the last step, and it fails.
+        .override_reply(
+            "POST",
+            "/subnets",
+            Reply::new(409, r#"{"code":"Conflict","message":"cidr overlaps"}"#)
+                .header("opc-request-id", "req-8"),
+        )
+        .reply("DELETE", "/", Reply::new(204, ""))
+        .start()
+        .await;
+
+    let error = run(&context(&mock), &request())
+        .await
+        .expect_err("the subnet creation fails");
+
+    let deletes: Vec<String> = mock
+        .writes()
+        .iter()
+        .filter(|write| write.method() == "DELETE")
+        .map(|write| write.target().to_owned())
+        .collect();
+
+    assert_eq!(
+        deletes.len(),
+        2,
+        "exactly the gateway and VCN should be removed: {deletes:?}"
+    );
+    assert!(deletes[0].contains("/internetGateways/"));
+    assert!(deletes[1].contains("/vcns/"));
+    assert!(
+        !mock
+            .writes()
+            .iter()
+            .any(|write| write.method() == "DELETE" && write.target().contains("/instances/")),
+        "no instance existed, so none may be terminated"
+    );
+    assert!(
+        error
+            .context()
+            .unwrap_or_default()
+            .contains("nothing that existed beforehand"),
+        "the error must reassure that pre-existing resources were untouched"
+    );
+}
+
 /// When compensation itself fails, the result is a partial mutation naming
 /// exactly what is left behind.
 #[tokio::test]

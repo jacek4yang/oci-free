@@ -73,9 +73,13 @@ Local checks: configuration loading, private key file permissions, the key
 itself, the fingerprint match, and a signing self-test that signs and verifies a
 representative request without sending anything.
 
-Live checks: signed authentication, tenancy access, home region, availability
-domains, and one read per capability — compute, networking, service limits, and
-usage. Every one is read-only.
+Live checks: signed authentication, tenancy access, region subscriptions and the
+home region, availability domains, and one read per capability — compute,
+networking, service limits, and usage.
+
+Every live check is read-only. The usage check is a `POST`, because the Usage
+API models its query that way, but it changes nothing; `doctor` never creates,
+modifies, or deletes anything.
 
 A missing **optional** capability is a warning, not a failure. A Free Tier
 tenancy routinely lacks the Usage API grant; failing `doctor` over it would
