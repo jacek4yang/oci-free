@@ -1,5 +1,13 @@
+pub mod audit;
+pub mod capacity;
+pub mod cidr;
+pub mod exposure;
 pub mod fingerprint;
 pub mod free;
+pub mod launch;
 pub mod network;
 pub mod ocid;
+pub mod ownership;
+pub mod plan;
 pub mod region;
+pub mod time;

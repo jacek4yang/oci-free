@@ -1,0 +1,57 @@
+[
+  {
+    "id": "ocid1.instance.oc1.iad.aaaaaaaarunninginstance1",
+    "compartmentId": "ocid1.tenancy.oc1..aaaaaaaaexampletenancyid7xk3q7a",
+    "displayName": "free-arm-1",
+    "lifecycleState": "RUNNING",
+    "availabilityDomain": "Uocm:US-ASHBURN-AD-1",
+    "shape": "VM.Standard.A1.Flex",
+    "shapeConfig": {
+      "ocpus": 2.0,
+      "memoryInGBs": 12.0,
+      "networkingBandwidthInGbps": 2.0,
+      "processorDescription": "Ampere Altra"
+    },
+    "imageId": "ocid1.image.oc1.iad.aaaaaaaaoraclelinux9",
+    "region": "iad",
+    "timeCreated": "2026-01-15T10:04:00.000Z",
+    "freeformTags": {
+      "oci-free:managed": "created",
+      "oci-free:role": "instance"
+    },
+    "definedTags": {}
+  },
+  {
+    "id": "ocid1.instance.oc1.iad.aaaaaaaastoppedinstance2",
+    "compartmentId": "ocid1.tenancy.oc1..aaaaaaaaexampletenancyid7xk3q7a",
+    "displayName": "free-micro-1",
+    "lifecycleState": "STOPPED",
+    "availabilityDomain": "Uocm:US-ASHBURN-AD-2",
+    "shape": "VM.Standard.E2.1.Micro",
+    "shapeConfig": {
+      "ocpus": 1.0,
+      "memoryInGBs": 1.0
+    },
+    "imageId": "ocid1.image.oc1.iad.aaaaaaaaoraclelinux8",
+    "region": "iad",
+    "timeCreated": "2026-02-02T08:00:00.000Z",
+    "freeformTags": {},
+    "definedTags": {}
+  },
+  {
+    "id": "ocid1.instance.oc1.iad.aaaaaaaaterminated3",
+    "compartmentId": "ocid1.tenancy.oc1..aaaaaaaaexampletenancyid7xk3q7a",
+    "displayName": "old-instance",
+    "lifecycleState": "TERMINATED",
+    "availabilityDomain": "Uocm:US-ASHBURN-AD-1",
+    "shape": "VM.Standard.A1.Flex",
+    "shapeConfig": {
+      "ocpus": 4.0,
+      "memoryInGBs": 24.0
+    },
+    "region": "iad",
+    "timeCreated": "2025-11-01T12:00:00.000Z",
+    "freeformTags": {},
+    "definedTags": {}
+  }
+]

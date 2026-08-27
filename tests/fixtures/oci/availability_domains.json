@@ -1,0 +1,17 @@
+[
+  {
+    "name": "Uocm:US-ASHBURN-AD-1",
+    "id": "ocid1.availabilitydomain.oc1..aaaaaaaaad1",
+    "compartmentId": "ocid1.tenancy.oc1..aaaaaaaaexampletenancyid7xk3q7a"
+  },
+  {
+    "name": "Uocm:US-ASHBURN-AD-2",
+    "id": "ocid1.availabilitydomain.oc1..aaaaaaaaad2",
+    "compartmentId": "ocid1.tenancy.oc1..aaaaaaaaexampletenancyid7xk3q7a"
+  },
+  {
+    "name": "Uocm:US-ASHBURN-AD-3",
+    "id": "ocid1.availabilitydomain.oc1..aaaaaaaaad3",
+    "compartmentId": "ocid1.tenancy.oc1..aaaaaaaaexampletenancyid7xk3q7a"
+  }
+]

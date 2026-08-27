@@ -1,0 +1,10 @@
+{
+  "id": "ocid1.vnic.oc1.iad.abuwcljrexamplevnic2",
+  "compartmentId": "ocid1.tenancy.oc1..aaaaaaaaexampletenancyid7xk3q7a",
+  "displayName": "private-vm primary vnic",
+  "subnetId": "ocid1.subnet.oc1.iad.aaaaaaaaexamplesubnet2",
+  "privateIp": "10.0.1.9",
+  "isPrimary": true,
+  "nsgIds": [],
+  "lifecycleState": "AVAILABLE"
+}

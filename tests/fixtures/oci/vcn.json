@@ -1,0 +1,11 @@
+{
+  "id": "ocid1.vcn.oc1.iad.aaaaaaaaexamplevcn1",
+  "compartmentId": "ocid1.tenancy.oc1..aaaaaaaaexampletenancyid7xk3q7a",
+  "displayName": "oci-free-vcn",
+  "cidrBlock": "10.0.0.0/16",
+  "cidrBlocks": ["10.0.0.0/16"],
+  "defaultRouteTableId": "ocid1.routetable.oc1.iad.aaaaaaaaexamplert1",
+  "defaultSecurityListId": "ocid1.securitylist.oc1.iad.aaaaaaaaexamplesl1",
+  "lifecycleState": "AVAILABLE",
+  "freeformTags": { "oci-free:managed": "created" }
+}

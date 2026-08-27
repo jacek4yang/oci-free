@@ -12,3 +12,7 @@ Thumbs.db
 *.pem
 *.key
 .env
+
+# Handoff patch artifacts. Generated from the commit history on demand, so
+# committing one would embed a copy of the repository inside itself.
+/*.patch

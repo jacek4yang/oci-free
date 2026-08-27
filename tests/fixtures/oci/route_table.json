@@ -1,0 +1,15 @@
+{
+  "id": "ocid1.routetable.oc1.iad.aaaaaaaaexamplert1",
+  "vcnId": "ocid1.vcn.oc1.iad.aaaaaaaaexamplevcn1",
+  "compartmentId": "ocid1.tenancy.oc1..aaaaaaaaexampletenancyid7xk3q7a",
+  "displayName": "oci-free-route-table",
+  "lifecycleState": "AVAILABLE",
+  "routeRules": [
+    {
+      "destination": "0.0.0.0/0",
+      "destinationType": "CIDR_BLOCK",
+      "networkEntityId": "ocid1.internetgateway.oc1.iad.aaaaaaaaexampleigw1",
+      "description": "default route to the internet gateway"
+    }
+  ]
+}

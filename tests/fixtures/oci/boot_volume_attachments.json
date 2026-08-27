@@ -1,0 +1,13 @@
+[
+  {
+    "id": "ocid1.instance.oc1.iad.anuwcljtexampleattachment1",
+    "instanceId": "ocid1.instance.oc1.iad.anuwcljtexampleinstance1",
+    "bootVolumeId": "ocid1.bootvolume.oc1.iad.abuwcljrexamplebootvolume1",
+    "availabilityDomain": "Uocm:US-ASHBURN-AD-1",
+    "compartmentId": "ocid1.tenancy.oc1..aaaaaaaaexampletenancyid7xk3q7a",
+    "displayName": "free-arm-1 boot attachment",
+    "lifecycleState": "ATTACHED",
+    "timeCreated": "2026-02-01T09:15:00.000Z",
+    "isPvEncryptionInTransitEnabled": false
+  }
+]

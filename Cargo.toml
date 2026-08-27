@@ -1,6 +1,6 @@
 [package]
 name = "oci-free"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.85"
 authors = ["jacek4yang"]
@@ -28,17 +28,65 @@ eula = false
 anyhow = "1.0"
 base64 = "0.23"
 clap = { version = "4.5", features = ["derive"] }
+# Interactive prompts only; no full-screen TUI (see CLAUDE.md).
+dialoguer = { version = "0.12", default-features = false }
 httpdate = "1.0"
 md-5 = "0.10"
-rsa = "0.9"
+# rustls only: the binary must not depend on a system OpenSSL.
+reqwest = { version = "0.13", default-features = false, features = [
+    "rustls-no-provider",
+    "rustls-native-certs",
+    "http2",
+    "charset",
+    "json",
+] }
+# rustls with the `ring` provider. reqwest's default `rustls` feature selects
+# aws-lc-rs, which needs cmake and a C toolchain on every release runner; ring
+# keeps all five target builds self-contained. The provider is installed
+# explicitly at client construction because `rustls-no-provider` leaves the
+# process default unset.
+rustls = { version = "0.23", default-features = false, features = [
+    "ring",
+    "std",
+    "tls12",
+    "logging",
+] }
+# RSA signing uses `ring`, not the RustCrypto `rsa` crate: RUSTSEC-2023-0071
+# (the Marvin timing sidechannel) has no patched version, and its stated
+# workaround is to avoid the crate. `ring` is already present as rustls's
+# crypto provider, so this removes a dependency rather than adding one.
+# See the module documentation in src/auth/key.rs.
+ring = "0.17"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = { version = "0.10", features = ["oid"] }
 thiserror = "2.0"
+# Retry jitter only. Not used for anything security-sensitive.
+rand = { version = "0.10", default-features = false, features = ["thread_rng"] }
+tokio = { version = "1", default-features = false, features = [
+    "rt-multi-thread",
+    "macros",
+    "time",
+    "signal",
+    "process",
+] }
 url = "2.5"
 
 [dev-dependencies]
+# A self-signed certificate for the in-process HTTPS mock server. The transport
+# refuses plaintext, so transport tests need real TLS rather than a plain
+# socket. Test-only: none of this reaches the shipped binary.
+rcgen = "0.14"
 tempfile = "3"
+tokio = { version = "1", default-features = false, features = [
+    "rt",
+    "rt-multi-thread",
+    "macros",
+    "time",
+    "net",
+    "io-util",
+] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 
 [lints.rust]
 unsafe_code = "forbid"

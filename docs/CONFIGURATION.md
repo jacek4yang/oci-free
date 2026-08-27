@@ -4,6 +4,32 @@
 configuration file the official tooling uses, but it does not require the OCI
 CLI, Python, or Node.js to be installed.
 
+## Creating a profile
+
+```console
+$ oci-free config init
+```
+
+writes the file for you, prompting for anything not supplied as a flag and
+validating each value before it is written. See
+[`COMMANDS.md`](COMMANDS.md#oci-free-config-init).
+
+`oci-free config show` prints the configuration that would be used, with the
+tenancy and user OCIDs redacted and no secret material — safe to paste into an
+issue.
+
+## Obtaining an API key
+
+oci-free does not generate keys. The OCI Console does it in one step, with no
+Python, OpenSSL, or OCI CLI:
+
+1. Profile menu → **My profile** → **API keys** → **Add API key**.
+2. Keep **Generate API key pair**, click **Download private key**, then **Add**.
+3. The Console shows a configuration preview with your tenancy OCID, user OCID,
+   fingerprint, and region.
+4. Store the private key somewhere only you can read:
+   `chmod 600 ~/.oci/oci_api_key.pem`.
+
 ## Configuration file
 
 The default location is `~/.oci/config` (`%USERPROFILE%\.oci\config` on
@@ -27,8 +53,9 @@ Notes:
 - a profile that defines the same key twice is rejected rather than silently
   resolved, because that mistake otherwise selects the wrong credentials;
 - `~` in `key_file` is expanded against the home directory;
-- `pass_phrase` is read but passphrase-protected keys are not usable yet, so
-  supply an unencrypted PKCS#8 or PKCS#1 key for now;
+- `pass_phrase` is read but passphrase-protected keys cannot be used; supply an
+  unencrypted PKCS#8 or PKCS#1 key (`openssl pkcs8 -topk8 -nocrypt` converts
+  one, or generate a fresh API key in the Console);
 - `security_token_file`, `delegation_token_file`, and `key_content` are
   recognised and rejected with an explanation instead of being ignored.
 
@@ -58,8 +85,8 @@ which fields were overridden.
 
 ## Checking the setup
 
-`oci-free doctor` validates everything that can be verified locally and exits
-non-zero when the configuration is not usable:
+`oci-free doctor` validates the configuration locally, then makes read-only
+calls to OCI, and exits non-zero when the setup is not usable:
 
 ```console
 $ oci-free doctor
@@ -68,8 +95,18 @@ $ oci-free doctor
 [     ok] Private key: loaded an RSA private key from /home/me/.oci/oci_api_key.pem
 [     ok] Key fingerprint: the private key matches the configured fingerprint 8d:54:...:8c
 [     ok] Request signing: signed and verified a test request as ocid1.tenancy.oc1..…xk3q7a/ocid1.user.oc1..…4m2p8z/8d:54:...:8c
-[skipped] Live OCI verification: not implemented yet; doctor currently validates local configuration only
+[     ok] Signed authentication: OCI accepted the request signature
+[     ok] Tenancy access: read tenancy ocid1.tenancy.oc1..…xk3q7a (example-tenancy)
+[     ok] Home region: this profile targets the home region us-ashburn-1
+[     ok] Availability domains: 3 domain(s) available: Uocm:US-ASHBURN-AD-1, ...
+[     ok] Compute read permission: listed 2 instance(s)
+[     ok] Networking read permission: listed 1 VCN(s)
+[warning] Service limits permission: service limits are unavailable: ...
+          next: optional: `allow group <g> to read limits in tenancy` makes `account limits` work
 ```
+
+A `warning` on an optional capability does not fail the run. Only a `failed`
+line does, and each one names the next corrective action.
 
 The fingerprint check is the important one: it derives the fingerprint from the
 private key and compares it with the configured value, which catches the common

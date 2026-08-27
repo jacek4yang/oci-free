@@ -77,19 +77,26 @@ Release infrastructure is testable before any tag exists.
 
 ## Versioning and prerelease policy
 
-`oci-free` is an early development preview. Most OCI management commands still
-return scaffold placeholders, so releases must not imply a finished product.
+The package is versioned `1.0.0`: the v1 command surface is implemented, the
+JSON contract and exit codes are stable, and the offline suite covers them.
 
-| Tag | Meaning | Use while… |
-| --- | --- | --- |
-| `v0.1.0-preview.1` | Preview | commands are still scaffolded — **this is where the project is today** |
-| `v0.1.0-rc.1` | Release candidate | the read and write OCI workflows exist and have been exercised against a real Free Tier tenancy |
-| `v0.1.0` | Stable | the criteria in `CLAUDE.md` under "Definition of the first useful release" are met |
+**The `v1.0.0` tag must not be pushed until
+[`LIVE-VALIDATION.md`](LIVE-VALIDATION.md) has been worked through against a
+real Free Tier tenancy and the results recorded.** A stable tag makes the
+`releases/latest` installer URLs point at that build, and a binary that can
+create and delete cloud resources but has never made a real API call is not
+something to put behind `latest`.
 
-cargo-dist marks any tag with a prerelease suffix as a GitHub prerelease
-automatically, which keeps it out of `releases/latest`. **Until the CLI stops
-returning scaffold output, tag only prereleases.** A stable tag would make the
-`latest` installer URLs point at a preview binary.
+If a build is wanted before that, cut a prerelease instead: set the version to
+`1.0.0-rc.1`, which cargo-dist marks as a GitHub prerelease and keeps out of
+`releases/latest`. The version in `Cargo.toml` and the tag must match, which the
+release smoke test verifies by comparing `oci-free --version` against
+`Cargo.toml`.
+
+| Version and tag | Meaning |
+| --- | --- |
+| `1.0.0-rc.1` | Release candidate: the commands exist and the offline suite is green, the live checklist is not complete. |
+| `1.0.0` | Stable: the live checklist has been completed and recorded. |
 
 ## Cutting a release
 
@@ -129,8 +136,8 @@ step.
 
    ```console
    git checkout main && git pull
-   git tag v0.1.0-preview.1
-   git push origin v0.1.0-preview.1
+   git tag v1.0.0
+   git push origin v1.0.0
    ```
 
 7. **Watch the release run** in the Actions tab. If a platform fails, the
