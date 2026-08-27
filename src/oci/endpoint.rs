@@ -99,6 +99,11 @@ pub struct EndpointResolver {
     realm: String,
     domain: &'static str,
     region: Region,
+    /// Test-only authority override, used to point the transport at an
+    /// in-process mock server. Compiled out of release builds entirely, so no
+    /// production path can redirect a signed request away from OCI.
+    #[cfg(test)]
+    authority_override: Option<String>,
 }
 
 impl EndpointResolver {
@@ -124,7 +129,15 @@ impl EndpointResolver {
             realm: realm.to_owned(),
             domain,
             region,
+            #[cfg(test)]
+            authority_override: None,
         })
+    }
+
+    /// Send every request for this resolver to `authority` instead of OCI.
+    #[cfg(test)]
+    pub fn override_authority_for_tests(&mut self, authority: &str) {
+        self.authority_override = Some(authority.to_owned());
     }
 
     #[must_use]
@@ -144,12 +157,18 @@ impl EndpointResolver {
             realm: self.realm.clone(),
             domain: self.domain,
             region,
+            #[cfg(test)]
+            authority_override: self.authority_override.clone(),
         }
     }
 
     /// The host for a service, for example `iaas.us-ashburn-1.oraclecloud.com`.
     #[must_use]
     pub fn host(&self, service: Service) -> String {
+        #[cfg(test)]
+        if let Some(authority) = &self.authority_override {
+            return authority.clone();
+        }
         format!("{}.{}.{}", service.host_prefix(), self.region, self.domain)
     }
 

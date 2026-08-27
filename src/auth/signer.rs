@@ -51,6 +51,23 @@ impl HttpMethod {
         }
     }
 
+    /// The matching `reqwest` method.
+    ///
+    /// Lives here so the signer stays the single source of truth for which
+    /// methods exist: adding one without teaching the signer about its body
+    /// rules would produce requests OCI rejects.
+    #[must_use]
+    pub fn into_reqwest(self) -> reqwest::Method {
+        match self {
+            Self::Get => reqwest::Method::GET,
+            Self::Head => reqwest::Method::HEAD,
+            Self::Post => reqwest::Method::POST,
+            Self::Put => reqwest::Method::PUT,
+            Self::Patch => reqwest::Method::PATCH,
+            Self::Delete => reqwest::Method::DELETE,
+        }
+    }
+
     /// Whether OCI expects the content headers to be signed for this method.
     ///
     /// `POST`, `PUT`, and `PATCH` always sign `content-length`, `content-type`,

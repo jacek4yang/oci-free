@@ -188,9 +188,9 @@ impl OciContext {
     }
 }
 
-/// A classified, user-presentable failure.
+/// The payload of an [`Error`], kept behind a box.
 #[derive(Debug)]
-pub struct Error {
+struct ErrorInner {
     kind: ErrorKind,
     /// What failed.
     message: String,
@@ -201,66 +201,75 @@ pub struct Error {
     oci: OciContext,
 }
 
+/// A classified, user-presentable failure.
+///
+/// The payload is boxed so that `Result<T>` stays pointer-sized. Errors are the
+/// cold path; making every success path in the codebase carry ~160 bytes of
+/// unused error space would be the wrong trade.
+#[derive(Debug)]
+pub struct Error(Box<ErrorInner>);
+
 impl Error {
     pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
-        Self {
+        Self(Box::new(ErrorInner {
             kind,
             message: message.into(),
             context: None,
             remediation: None,
             oci: OciContext::default(),
-        }
+        }))
     }
 
     #[must_use]
     pub fn with_context(mut self, context: impl Into<String>) -> Self {
-        self.context = Some(context.into());
+        self.0.context = Some(context.into());
         self
     }
 
     #[must_use]
     pub fn with_remediation(mut self, remediation: impl Into<String>) -> Self {
-        self.remediation = Some(remediation.into());
+        self.0.remediation = Some(remediation.into());
         self
     }
 
     #[must_use]
     pub fn with_oci(mut self, oci: OciContext) -> Self {
-        self.oci = oci;
+        self.0.oci = oci;
         self
     }
 
     #[must_use]
     pub fn kind(&self) -> ErrorKind {
-        self.kind
+        self.0.kind
     }
 
     #[must_use]
     pub fn message(&self) -> &str {
-        &self.message
+        &self.0.message
     }
 
     #[must_use]
     pub fn context(&self) -> Option<&str> {
-        self.context.as_deref()
+        self.0.context.as_deref()
     }
 
     #[must_use]
     pub fn oci(&self) -> &OciContext {
-        &self.oci
+        &self.0.oci
     }
 
     /// The corrective action, falling back to guidance for the category.
     #[must_use]
     pub fn remediation(&self) -> &str {
-        self.remediation
+        self.0
+            .remediation
             .as_deref()
-            .unwrap_or_else(|| self.kind.default_remediation())
+            .unwrap_or_else(|| self.0.kind.default_remediation())
     }
 
     #[must_use]
     pub fn exit_code_kind(&self) -> ExitCodeKind {
-        self.kind.exit_code_kind()
+        self.0.kind.exit_code_kind()
     }
 
     // Constructors for the categories used across the codebase. These exist so
@@ -317,11 +326,11 @@ impl Error {
     /// Render for a terminal: what failed, why, and what to do next.
     #[must_use]
     pub fn render_human(&self) -> String {
-        let mut out = format!("error: {}\n", self.message);
-        if let Some(context) = &self.context {
+        let mut out = format!("error: {}\n", self.0.message);
+        if let Some(context) = &self.0.context {
             out.push_str(&format!("  {context}\n"));
         }
-        if let Some(request_id) = &self.oci.request_id {
+        if let Some(request_id) = &self.0.oci.request_id {
             out.push_str(&format!("  OCI request id: {request_id}\n"));
         }
         out.push_str(&format!("  next: {}\n", self.remediation()));
@@ -331,7 +340,7 @@ impl Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
+        f.write_str(&self.0.message)
     }
 }
 
@@ -424,6 +433,17 @@ mod tests {
         let overridden = Error::new(ErrorKind::Authorization, "denied")
             .with_remediation("grant COMPUTE_INSTANCE_INSPECT");
         assert_eq!(overridden.remediation(), "grant COMPUTE_INSTANCE_INSPECT");
+    }
+
+    /// `Result<T>` is used on every code path, so the error must stay small.
+    /// clippy's `result_large_err` fires if this regresses.
+    #[test]
+    fn error_is_pointer_sized() {
+        assert_eq!(
+            std::mem::size_of::<Error>(),
+            std::mem::size_of::<usize>(),
+            "Error must stay boxed so Result<T> does not grow"
+        );
     }
 
     #[test]
