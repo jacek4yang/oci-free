@@ -51,9 +51,25 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
 
-      # The shipped binary must carry no known advisory. Anything reachable
-      # only through a dev-dependency is assessed in docs/SECURITY.md; a new
-      # advisory fails the build so the assessment is made deliberately rather
-      # than inherited.
+      # cargo-audit scans Cargo.lock, which includes dev-dependencies. The one
+      # advisory suppressed below is reachable only through `rcgen`, the
+      # dev-dependency that generates a certificate for the in-process HTTPS
+      # test server, and its fix needs a newer Rust than this package's MSRV.
+      #
+      # The suppression is only sound while that premise holds, so the next
+      # step proves it: if `time` ever appears in the graph that is actually
+      # linked into a release binary, the job fails and the assessment in
+      # docs/SECURITY.md has to be revisited. Every other advisory, including
+      # any future one, fails the build.
       - name: Audit
-        run: cargo audit --deny warnings
+        run: cargo audit --deny warnings --ignore RUSTSEC-2026-0009
+
+      - name: Prove the suppressed advisory cannot reach a shipped artifact
+        run: |
+          if cargo tree --edges normal --prefix none | grep -qE '^(time|rcgen) '; then
+            echo "::error::A suppressed dev-only advisory is now reachable from the shipping dependency graph."
+            cargo tree --edges normal --invert time || true
+            exit 1
+          fi
+          echo "Confirmed: neither time nor rcgen is in the shipping dependency graph."
+

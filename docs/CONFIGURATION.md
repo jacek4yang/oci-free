@@ -4,6 +4,32 @@
 configuration file the official tooling uses, but it does not require the OCI
 CLI, Python, or Node.js to be installed.
 
+## Creating a profile
+
+```console
+$ oci-free config init
+```
+
+writes the file for you, prompting for anything not supplied as a flag and
+validating each value before it is written. See
+[`COMMANDS.md`](COMMANDS.md#oci-free-config-init).
+
+`oci-free config show` prints the configuration that would be used, with the
+tenancy and user OCIDs redacted and no secret material — safe to paste into an
+issue.
+
+## Obtaining an API key
+
+oci-free does not generate keys. The OCI Console does it in one step, with no
+Python, OpenSSL, or OCI CLI:
+
+1. Profile menu → **My profile** → **API keys** → **Add API key**.
+2. Keep **Generate API key pair**, click **Download private key**, then **Add**.
+3. The Console shows a configuration preview with your tenancy OCID, user OCID,
+   fingerprint, and region.
+4. Store the private key somewhere only you can read:
+   `chmod 600 ~/.oci/oci_api_key.pem`.
+
 ## Configuration file
 
 The default location is `~/.oci/config` (`%USERPROFILE%\.oci\config` on
@@ -27,8 +53,9 @@ Notes:
 - a profile that defines the same key twice is rejected rather than silently
   resolved, because that mistake otherwise selects the wrong credentials;
 - `~` in `key_file` is expanded against the home directory;
-- `pass_phrase` is read but passphrase-protected keys are not usable yet, so
-  supply an unencrypted PKCS#8 or PKCS#1 key for now;
+- `pass_phrase` is read but passphrase-protected keys cannot be used; supply an
+  unencrypted PKCS#8 or PKCS#1 key (`openssl pkcs8 -topk8 -nocrypt` converts
+  one, or generate a fresh API key in the Console);
 - `security_token_file`, `delegation_token_file`, and `key_content` are
   recognised and rejected with an explanation instead of being ignored.
 

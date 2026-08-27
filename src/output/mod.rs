@@ -216,3 +216,7 @@ mod tests {
         assert!(!success.contains('\u{1b}'));
     }
 }
+
+#[cfg(test)]
+#[path = "schema_tests.rs"]
+mod schema_tests;
