@@ -27,11 +27,13 @@ jobs:
       - name: Format
         run: cargo fmt --check
 
+      # Cargo.lock is committed, so dependency drift must fail in CI rather
+      # than being silently resolved during a release.
       - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
       - name: Test
-        run: cargo test --all-features
+        run: cargo test --locked --all-features
 
       - name: Build
-        run: cargo build
+        run: cargo build --locked

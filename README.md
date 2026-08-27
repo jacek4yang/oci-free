@@ -2,7 +2,7 @@
 
 A smart, free-first, safety-focused command-line manager for Oracle Cloud Infrastructure Free Tier accounts.
 
-> Status: early development. Configuration loading, OCI request signing, and `oci-free doctor` are implemented; every command that talks to a live OCI endpoint is still a scaffold.
+> Status: early development preview. Configuration loading, OCI request signing, and `oci-free doctor` are implemented; every command that talks to a live OCI endpoint is still a scaffold. The distribution pipeline may be release-ready before the OCI management feature set is complete.
 
 ## Goals
 
@@ -52,6 +52,46 @@ $ oci-free doctor
 
 `doctor` exits non-zero when the configuration is not usable and names the next corrective action for every failure. See [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) for the file format, the supported environment variables, and what is redacted from diagnostics.
 
+## Installation
+
+`oci-free` is distributed as a single native executable. End users do not need Rust, Cargo, Python, Node.js, Java, or the official OCI CLI.
+
+**macOS and Linux**
+
+For a published version, download and run the version-pinned installer:
+
+```console
+VERSION=v0.1.0-preview.1
+curl --proto '=https' --tlsv1.2 -LsSf "https://github.com/jacek4yang/oci-free/releases/download/${VERSION}/oci-free-installer.sh" | sh
+```
+
+**Windows**
+
+For a published version, use the version-pinned PowerShell installer:
+
+```powershell
+$Version = "v0.1.0-preview.1"
+irm "https://github.com/jacek4yang/oci-free/releases/download/$Version/oci-free-installer.ps1" | iex
+```
+
+For offline Windows installation, download `oci-free-x86_64-pc-windows-msvc.msi` from the same GitHub Release and double-click it. The MSI installs the native executable under Program Files, integrates it with `PATH` by default, supports upgrades, and can be removed from Windows installed-app management.
+
+Every supported platform also has a plain binary archive for offline transfer:
+
+| Machine | Offline artifact |
+| --- | --- |
+| Windows x86_64 | `oci-free-x86_64-pc-windows-msvc.zip` or the `.msi` |
+| macOS Apple Silicon | `oci-free-aarch64-apple-darwin.tar.xz` |
+| macOS Intel | `oci-free-x86_64-apple-darwin.tar.xz` |
+| Linux x86_64 | `oci-free-x86_64-unknown-linux-gnu.tar.xz` |
+| Linux ARM64 | `oci-free-aarch64-unknown-linux-gnu.tar.xz` |
+
+Archive artifacts have SHA-256 checksum sidecars and release artifacts have GitHub artifact attestations. Windows artifacts are not Authenticode signed and macOS artifacts are not Apple Developer ID signed or notarized, so operating-system warnings are expected for preview builds.
+
+Once the project publishes a stable, non-prerelease release, the equivalent `/releases/latest/download/...` installer URLs can be used. GitHub intentionally excludes prereleases from `releases/latest`.
+
+See [`docs/INSTALLATION.md`](docs/INSTALLATION.md) for detailed online, offline, PATH, verification, and uninstall instructions.
+
 ## Safety model
 
 A resource is not considered safe to create merely because a tutorial says it is free. The policy engine should gather evidence from OCI and classify a planned operation as one of:
@@ -76,17 +116,17 @@ cargo run -- --help
 
 Development priorities and agent instructions are in [`CLAUDE.md`](CLAUDE.md).
 
-## Distribution target
+## Distribution
 
-The planned release matrix is:
+The release matrix is:
 
-- Windows x86_64
-- Linux x86_64
-- Linux ARM64
-- macOS x86_64
-- macOS Apple Silicon
+- Windows x86_64 (`x86_64-pc-windows-msvc`)
+- Linux x86_64 (`x86_64-unknown-linux-gnu`)
+- Linux ARM64 (`aarch64-unknown-linux-gnu`)
+- macOS Intel (`x86_64-apple-darwin`)
+- macOS Apple Silicon (`aarch64-apple-darwin`)
 
-The repository includes `cargo-dist` configuration so tagged releases can eventually publish archives plus shell and PowerShell installers.
+`cargo-dist` generates the release workflow, native archives, shell and PowerShell installers, and the Windows MSI. Release infrastructure is validated on pull requests before any tag is published.
 
 ## License
 

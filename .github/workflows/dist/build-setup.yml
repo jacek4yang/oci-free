@@ -1,0 +1,15 @@
+# Extra steps injected into the dist release build jobs via the
+# `github-build-setup` option in dist-workspace.toml.
+#
+# This is a fragment (a list of steps), not a workflow. It lives in a
+# subdirectory because GitHub only treats files directly in
+# .github/workflows/ as workflows, and would otherwise report this as an
+# invalid workflow file. dist resolves the path relative to
+# .github/workflows/.
+#
+# dist has no option for passing `--locked` to the application build, so this
+# asserts that the committed Cargo.lock already satisfies Cargo.toml. If it does
+# not, the release fails here instead of silently resolving a different
+# dependency graph than the one CI tested.
+- name: Verify the committed lockfile is up to date
+  run: cargo fetch --locked

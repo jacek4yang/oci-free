@@ -3,13 +3,26 @@ name = "oci-free"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
+authors = ["jacek4yang"]
 description = "A smart, free-first CLI for safely managing Oracle Cloud Free Tier resources"
 license = "MIT"
 repository = "https://github.com/jacek4yang/oci-free"
+homepage = "https://github.com/jacek4yang/oci-free"
 readme = "README.md"
 keywords = ["oci", "oracle-cloud", "cli", "free-tier"]
 categories = ["command-line-utilities"]
 publish = false
+
+# This application is distributed through GitHub Releases rather than crates.io.
+# `dist = true` overrides cargo-dist's normal `publish = false` exclusion.
+[package.metadata.dist]
+dist = true
+
+[package.metadata.wix]
+upgrade-guid = "902D0748-0155-4020-8744-EBDC0773F0AF"
+path-guid = "A776BF7C-83D4-4E79-B142-73A383A763A3"
+license = false
+eula = false
 
 [dependencies]
 anyhow = "1.0"
@@ -32,3 +45,8 @@ unsafe_code = "forbid"
 
 [lints.clippy]
 all = "warn"
+
+# Release profile used by dist.
+[profile.dist]
+inherits = "release"
+lto = "thin"
