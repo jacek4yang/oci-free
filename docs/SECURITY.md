@@ -25,6 +25,22 @@ Effective exposure must account for both NSGs and subnet Security Lists. Removin
 
 Termination and cleanup commands must distinguish the instance from related resources such as boot volumes, reserved public IPs, and managed NSGs. The user should see exactly which resources will be deleted, retained, or released before confirmation.
 
+## Release artifact integrity
+
+Release binaries are built by GitHub Actions from a tagged commit, using the
+`cargo-dist` version pinned in `dist-workspace.toml` and the committed
+`Cargo.lock`. The release pipeline needs no OCI credentials and makes no OCI API
+calls.
+
+Each native binary archive ships with a SHA-256 sidecar. Release artifacts also
+carry GitHub artifact attestations recording the workflow, commit, and repository
+that produced them.
+
+Artifacts are **not** Windows Authenticode signed and **not** Apple Developer ID
+signed or notarised. Attestations are supply-chain provenance and are not a
+substitute for either; the operating system will still warn on first run. See
+[`RELEASE.md`](RELEASE.md#signing-status).
+
 ## Reporting vulnerabilities
 
 Until a dedicated private security reporting channel is configured, do not publish credentials, tenancy identifiers, or exploitable secrets in public issues. Use GitHub's private vulnerability reporting feature once enabled for the repository.

@@ -1,0 +1,5 @@
+# cargo-dist generates wix/main.wxs with CRLF line endings and rewrites it that
+# way on every `dist generate`. Storing it normalised and checking it out as
+# CRLF keeps the working tree matching the generator on every platform, so
+# `dist generate --check` stays clean and the file does not churn.
+*.wxs text eol=crlf

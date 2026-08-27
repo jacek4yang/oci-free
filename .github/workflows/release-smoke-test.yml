@@ -1,0 +1,247 @@
+# Exercises the real release artifacts: builds them with the same `dist build`
+# command the Release workflow uses, then installs and runs them.
+#
+# The Release workflow already builds every target on every pull request
+# (pr-run-mode = "upload"), which proves the artifacts *build*. This workflow
+# proves they *install and run*, which is the expensive half, so it is limited
+# to pull requests that touch release infrastructure plus manual runs. Run it
+# from the Actions tab before tagging a release.
+name: Release smoke test
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - dist-workspace.toml
+      - wix/**
+      - .github/workflows/release.yml
+      - .github/workflows/dist/build-setup.yml
+      - .github/workflows/release-smoke-test.yml
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  unix:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+          - runner: macos-14
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: smoke-${{ matrix.target }}
+
+      - name: Install dist
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^cargo-dist-version = "\(.*\)"$/\1/p' dist-workspace.toml)"
+          test -n "$version"
+          echo "Installing dist $version"
+          curl --proto '=https' --tlsv1.2 -LsSf \
+            "https://github.com/axodotdev/cargo-dist/releases/download/v${version}/cargo-dist-installer.sh" | sh
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Build release artifacts
+        run: |
+          set -euo pipefail
+          cargo fetch --locked
+          dist build --artifacts=local --target=${{ matrix.target }}
+
+      - name: Verify archive contents and checksum
+        run: |
+          set -euo pipefail
+          archive="target/distrib/oci-free-${{ matrix.target }}.tar.xz"
+          test -f "$archive"
+          test -f "$archive.sha256"
+          ( cd target/distrib && shasum -a 256 -c "oci-free-${{ matrix.target }}.tar.xz.sha256" )
+          actual="$(tar -tf "$archive" | sed 's#^oci-free-${{ matrix.target }}/##' | grep -v '^$' | sort | tr '\n' ' ')"
+          expected="LICENSE README.md oci-free "
+          if [ "$actual" != "$expected" ]; then
+            echo "unexpected archive contents: [$actual]"
+            echo "expected:                    [$expected]"
+            exit 1
+          fi
+
+      - name: Run the packaged binary
+        run: |
+          set -euo pipefail
+          rm -rf smoke && mkdir smoke
+          tar -xf "target/distrib/oci-free-${{ matrix.target }}.tar.xz" -C smoke --strip-components=1
+          chmod +x smoke/oci-free
+          expected="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
+          actual="$(./smoke/oci-free --version)"
+          echo "reported: $actual (expected version $expected)"
+          test "$actual" = "oci-free $expected"
+          ./smoke/oci-free --help > /dev/null
+
+      - name: Install to ~/.local/bin and run through PATH
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/bin"
+          install -m 755 smoke/oci-free "$HOME/.local/bin/oci-free"
+          env -i HOME="$HOME" PATH="$HOME/.local/bin:/usr/bin:/bin" oci-free --version
+          env -i HOME="$HOME" PATH="$HOME/.local/bin:/usr/bin:/bin" oci-free --help > /dev/null
+
+  windows-msi:
+    name: x86_64-pc-windows-msvc (MSI)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: smoke-x86_64-pc-windows-msvc
+
+      - name: Install dist
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $match = Select-String -Path dist-workspace.toml -Pattern '^cargo-dist-version = "(.*)"' |
+            Select-Object -First 1
+          if (-not $match) { throw 'cargo-dist-version is missing from dist-workspace.toml' }
+          $version = $match.Matches[0].Groups[1].Value
+          Write-Host "Installing dist $version"
+          irm "https://github.com/axodotdev/cargo-dist/releases/download/v$version/cargo-dist-installer.ps1" | iex
+          "$env:USERPROFILE\.cargo\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Build release artifacts
+        run: |
+          set -euo pipefail
+          cargo fetch --locked
+          dist build --artifacts=local --target=x86_64-pc-windows-msvc
+
+      - name: Verify the archive and the MSI exist
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = 'target/distrib/oci-free-x86_64-pc-windows-msvc.zip'
+          $msi = 'target/distrib/oci-free-x86_64-pc-windows-msvc.msi'
+          foreach ($f in @($zip, $msi, "$zip.sha256")) {
+            if (-not (Test-Path $f)) { throw "missing release artifact: $f" }
+          }
+          $expected = ((Get-Content "$zip.sha256" -Raw) -split '\s+')[0]
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($expected -ne $actual) { throw "checksum mismatch for $zip" }
+          Remove-Item -Recurse -Force zipcheck -ErrorAction SilentlyContinue
+          Expand-Archive -Path $zip -DestinationPath zipcheck
+          $names = Get-ChildItem zipcheck -Recurse -File | ForEach-Object { $_.Name } | Sort-Object
+          $expectedNames = @('LICENSE', 'README.md', 'oci-free.exe')
+          if (($names -join ' ') -ne ($expectedNames -join ' ')) {
+            throw "unexpected archive contents: $($names -join ' ')"
+          }
+
+      - name: Install the MSI non-interactively
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $msi = (Resolve-Path 'target/distrib/oci-free-x86_64-pc-windows-msvc.msi').Path
+          $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+            '/i', "`"$msi`"", '/qn', '/norestart', '/l*v', 'install.log'
+          )
+          if ($p.ExitCode -notin @(0, 3010)) {
+            Get-Content install.log -Tail 60
+            throw "msiexec install failed with exit code $($p.ExitCode)"
+          }
+
+      - name: Verify the installed layout, PATH entry and uninstall entry
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $binDir = Join-Path $env:ProgramFiles 'oci-free\bin'
+          $exe = Join-Path $binDir 'oci-free.exe'
+          if (-not (Test-Path $exe)) { throw "oci-free.exe was not installed to $exe" }
+          $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          if (-not (($machinePath -split ';') -contains $binDir)) {
+            throw "install directory is not on the machine PATH: $machinePath"
+          }
+          $uninstallKeys = @(
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+          )
+          $entry = Get-ItemProperty $uninstallKeys -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -eq 'oci-free' }
+          if (-not $entry) { throw 'oci-free is not listed in installed programs' }
+          Write-Host "installed program: $($entry.DisplayName) $($entry.DisplayVersion) by $($entry.Publisher)"
+
+      - name: Run oci-free from a new process through PATH
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+          $env:PATH = "$machinePath;$userPath"
+          $version = (& cmd /c 'oci-free --version' | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "oci-free --version failed ($LASTEXITCODE)" }
+          $expected = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"' |
+            Select-Object -First 1).Matches[0].Groups[1].Value
+          Write-Host "reported: $version (expected version $expected)"
+          if ($version -ne "oci-free $expected") { throw "unexpected --version output: $version" }
+          & cmd /c 'oci-free --help > NUL'
+          if ($LASTEXITCODE -ne 0) { throw "oci-free --help failed ($LASTEXITCODE)" }
+
+      - name: Uninstall the MSI and verify removal
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $msi = (Resolve-Path 'target/distrib/oci-free-x86_64-pc-windows-msvc.msi').Path
+          $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+            '/x', "`"$msi`"", '/qn', '/norestart', '/l*v', 'uninstall.log'
+          )
+          if ($p.ExitCode -notin @(0, 3010)) {
+            Get-Content uninstall.log -Tail 60
+            throw "msiexec uninstall failed with exit code $($p.ExitCode)"
+          }
+          $binDir = Join-Path $env:ProgramFiles 'oci-free\bin'
+          if (Test-Path (Join-Path $binDir 'oci-free.exe')) { throw 'oci-free.exe survived uninstall' }
+          $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          if (($machinePath -split ';') -contains $binDir) {
+            throw "uninstall left the install directory on the machine PATH"
+          }
+          $uninstallKeys = @(
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+          )
+          $entry = Get-ItemProperty $uninstallKeys -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -eq 'oci-free' }
+          if ($entry) { throw 'oci-free is still listed in installed programs' }
+
+      - name: Upload MSI logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: msi-logs
+          path: |
+            install.log
+            uninstall.log
+          if-no-files-found: ignore
