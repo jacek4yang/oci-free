@@ -63,7 +63,9 @@ fn dispatch(cli: Cli) -> Result<()> {
         );
     } else {
         println!("oci-free scaffold: {action}");
-        println!("OCI transport is not implemented yet. See CLAUDE.md for the implementation contract.");
+        println!(
+            "OCI transport is not implemented yet. See CLAUDE.md for the implementation contract."
+        );
     }
 
     Ok(())
