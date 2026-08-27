@@ -1,6 +1,4 @@
 mod cli;
-mod domain;
-mod policy;
 
 use anyhow::Result;
 use clap::Parser;
