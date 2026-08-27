@@ -123,8 +123,13 @@ measured. That is *unknown*, not zero.
 
 ### `doctor`
 
-`schema` (`oci-free.doctor/v1`), `status`, `checks` (array of `id`, `title`,
-`status`, `detail`, `remediation`), `config`.
+`data` carries `schema` (`oci-free.doctor/v1`), `status`, `checks` (array of
+`id`, `title`, `status`, `detail`, `remediation`), and `config`.
+
+`doctor` reports a bad verdict **in the payload and the exit code**, not as an
+error envelope: the report is the answer either way, so there is always exactly
+one JSON document on stdout. The envelope's `warnings` array repeats every
+failing and warning check, so a consumer need not walk the whole list.
 
 `status` and each check's `status` are one of `pass`, `skipped`, `warn`, `fail`.
 Check `id` values are stable identifiers: `configuration`,

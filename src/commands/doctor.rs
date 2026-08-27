@@ -732,7 +732,8 @@ pub fn render_human(report: &DoctorReport) -> String {
 
 /// Whether the report proves the tool can do useful work.
 ///
-/// Used by the caller to decide the process exit code.
+/// Used where a caller wants the verdict as a `Result` rather than as an exit
+/// code.
 pub fn is_usable(report: &DoctorReport) -> Result<()> {
     if report.is_healthy() {
         return Ok(());
@@ -748,6 +749,27 @@ pub fn is_usable(report: &DoctorReport) -> Result<()> {
             .with_context(format!("failing checks: {}", failures.join(", ")))
             .with_remediation("fix the failures reported by `oci-free doctor`"),
     )
+}
+
+/// The failing and warning checks, phrased for the envelope's `warnings` array.
+///
+/// A consumer should not have to walk every check to learn that something needs
+/// attention.
+#[must_use]
+pub fn advisories(report: &DoctorReport) -> Vec<String> {
+    report
+        .checks
+        .iter()
+        .filter(|check| matches!(check.status, CheckStatus::Fail | CheckStatus::Warn))
+        .map(|check| {
+            format!(
+                "{}: {} — {}",
+                check.status.label(),
+                check.title,
+                check.detail
+            )
+        })
+        .collect()
 }
 
 /// Render the report as stable JSON.

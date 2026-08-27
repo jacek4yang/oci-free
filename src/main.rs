@@ -140,8 +140,12 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
                     memory,
                 },
         } => {
-            let context = context(cli)?;
+            // Validate the arguments before touching configuration: a typo is
+            // a usage error whether or not a profile happens to exist, and
+            // reporting it as a configuration failure sends the user to fix
+            // the wrong thing.
             let projection = policy::parse_projection(*ocpus, *memory)?;
+            let context = context(cli)?;
             let explanation = policy::explain(&context, resource, projection).await?;
             emit(
                 cli,
@@ -316,6 +320,15 @@ async fn run_vm(cli: &Cli, command: &VmCommand) -> Result<ExitCode> {
 
 async fn run_vm_net(cli: &Cli, instance: &str, command: &VmNetCommand) -> Result<ExitCode> {
     let success = ExitCodeKind::Success.exit_code();
+
+    // Parse the rule first, for the same reason as above: `443` without a
+    // protocol is a usage error, not a configuration problem.
+    let rule = match command {
+        VmNetCommand::Open { rule, .. } | VmNetCommand::Close { rule, .. } => {
+            Some(parse_rule(rule)?)
+        }
+        VmNetCommand::Show | VmNetCommand::Audit => None,
+    };
     let context = context(cli)?;
 
     match command {
@@ -337,16 +350,16 @@ async fn run_vm_net(cli: &Cli, instance: &str, command: &VmNetCommand) -> Result
             })
         }
 
-        VmNetCommand::Open { rule, source, yes } => {
-            let rule = parse_rule(rule)?;
+        VmNetCommand::Open { source, yes, .. } => {
+            let rule = rule.expect("the rule was parsed above");
             let (_, change) =
                 vmnet::open(&context, instance, rule, source.as_deref(), *yes).await?;
             emit(cli, "vm.net.open", &change, vmnet::render_change(&change))?;
             Ok(success)
         }
 
-        VmNetCommand::Close { rule, yes } => {
-            let rule = parse_rule(rule)?;
+        VmNetCommand::Close { yes, .. } => {
+            let rule = rule.expect("the rule was parsed above");
             let (_, change) = vmnet::close(&context, instance, rule, *yes).await?;
             emit(cli, "vm.net.close", &change, vmnet::render_change(&change))?;
             Ok(success)
@@ -413,11 +426,23 @@ fn emit<T: Serialize>(cli: &Cli, command: &str, data: &T, human: String) -> Resu
     Ok(())
 }
 
+/// `doctor` reports its verdict in the payload and the exit code, not as an
+/// error.
+///
+/// The report *is* the answer, including when it is bad news, so emitting a
+/// failure envelope alongside it would put two JSON documents on stdout and
+/// break the contract in `docs/JSON.md`. The human rendering already ends with
+/// a line saying what to do, so an extra error block would only repeat it.
 async fn run_doctor(cli: &Cli) -> Result<ExitCode> {
     let report = doctor::run_with_live(&Environment::from_process(), &cli.config_options()).await;
 
     if cli.json {
-        let rendered = doctor::render_json(&report).map_err(|error| {
+        // The same envelope every other command uses, with the failing and
+        // warning checks surfaced as warnings so a consumer need not walk the
+        // whole list to know something needs attention.
+        let envelope =
+            Envelope::success("doctor", &report).with_warnings(doctor::advisories(&report));
+        let rendered = envelope.render().map_err(|error| {
             Error::new(
                 ErrorKind::MalformedResponse,
                 "could not serialize the report",
@@ -429,8 +454,11 @@ async fn run_doctor(cli: &Cli) -> Result<ExitCode> {
         print!("{}", doctor::render_human(&report));
     }
 
-    doctor::is_usable(&report)?;
-    Ok(ExitCodeKind::Success.exit_code())
+    Ok(if report.is_healthy() {
+        ExitCodeKind::Success.exit_code()
+    } else {
+        ExitCodeKind::Configuration.exit_code()
+    })
 }
 
 /// Explain why `--generate-key` is not offered.
