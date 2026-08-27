@@ -2,7 +2,7 @@
 
 A smart, free-first, safety-focused command-line manager for Oracle Cloud Infrastructure Free Tier accounts.
 
-> Status: early scaffold. The repository intentionally starts with a small, auditable core and a detailed product/architecture contract for agent-assisted development.
+> Status: early development. Configuration loading, OCI request signing, and `oci-free doctor` are implemented; every command that talks to a live OCI endpoint is still a scaffold.
 
 ## Goals
 
@@ -36,6 +36,21 @@ $ oci-free cost
 ```
 
 Interactive commands should guide the user through safe choices. Non-interactive flags should remain available for automation.
+
+## Getting started
+
+`oci-free` reads the standard `~/.oci/config` file and its API signing key, but it does not require the OCI CLI, Python, or Node.js. Once a profile exists, check it:
+
+```console
+$ oci-free doctor
+[     ok] Configuration: loaded profile [DEFAULT] of /home/me/.oci/config for region us-ashburn-1
+[     ok] Private key: loaded an RSA private key from /home/me/.oci/oci_api_key.pem
+[     ok] Key fingerprint: the private key matches the configured fingerprint 8d:54:...:8c
+[     ok] Request signing: signed and verified a test request
+[skipped] Live OCI verification: not implemented yet; doctor currently validates local configuration only
+```
+
+`doctor` exits non-zero when the configuration is not usable and names the next corrective action for every failure. See [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) for the file format, the supported environment variables, and what is redacted from diagnostics.
 
 ## Safety model
 

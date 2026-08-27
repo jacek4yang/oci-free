@@ -1,4 +1,7 @@
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
+use oci_free::config::ConfigOptions;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -12,8 +15,27 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
+    /// Path to the OCI configuration file. Defaults to ~/.oci/config.
+    #[arg(long, global = true, value_name = "PATH")]
+    pub config_file: Option<PathBuf>,
+
+    /// Configuration profile to read. Defaults to DEFAULT.
+    #[arg(long, global = true, value_name = "NAME")]
+    pub profile: Option<String>,
+
     #[command(subcommand)]
     pub command: Command,
+}
+
+impl Cli {
+    /// Configuration overrides selected on the command line.
+    #[must_use]
+    pub fn config_options(&self) -> ConfigOptions {
+        ConfigOptions {
+            config_file: self.config_file.clone(),
+            profile: self.profile.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
