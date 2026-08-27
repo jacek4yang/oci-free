@@ -29,10 +29,7 @@ pub fn parse(text: &str) -> Result<Profiles, IniError> {
         if let Some(rest) = line.strip_prefix('[') {
             let name = rest
                 .strip_suffix(']')
-                .ok_or_else(|| IniError::UnterminatedSection {
-                    line: line_number,
-                    text: line.to_owned(),
-                })?
+                .ok_or(IniError::UnterminatedSection { line: line_number })?
                 .trim();
             if name.is_empty() {
                 return Err(IniError::EmptySectionName { line: line_number });
@@ -46,16 +43,10 @@ pub fn parse(text: &str) -> Result<Profiles, IniError> {
         // the first separator is significant.
         let (key, value) = line
             .split_once('=')
-            .ok_or_else(|| IniError::MalformedEntry {
-                line: line_number,
-                text: line.to_owned(),
-            })?;
+            .ok_or(IniError::MalformedEntry { line: line_number })?;
         let key = key.trim().to_ascii_lowercase();
         if key.is_empty() {
-            return Err(IniError::MalformedEntry {
-                line: line_number,
-                text: line.to_owned(),
-            });
+            return Err(IniError::MalformedEntry { line: line_number });
         }
 
         let entries = profiles.entry(current.clone()).or_default();
@@ -75,11 +66,11 @@ pub fn parse(text: &str) -> Result<Profiles, IniError> {
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum IniError {
     #[error("line {line}: section header is not terminated with ']'")]
-    UnterminatedSection { line: usize, text: String },
+    UnterminatedSection { line: usize },
     #[error("line {line}: section header has an empty profile name")]
     EmptySectionName { line: usize },
     #[error("line {line}: expected 'key = value'")]
-    MalformedEntry { line: usize, text: String },
+    MalformedEntry { line: usize },
     #[error("line {line}: profile [{profile}] defines '{key}' more than once")]
     DuplicateKey {
         line: usize,
@@ -156,7 +147,7 @@ region = eu-frankfurt-1
     fn malformed_lines_are_rejected_with_line_numbers() {
         assert!(matches!(
             parse("[DEFAULT\n"),
-            Err(IniError::UnterminatedSection { line: 1, .. })
+            Err(IniError::UnterminatedSection { line: 1 })
         ));
         assert!(matches!(
             parse("[]\n"),
@@ -164,21 +155,24 @@ region = eu-frankfurt-1
         ));
         assert!(matches!(
             parse("[DEFAULT]\nnonsense\n"),
-            Err(IniError::MalformedEntry { line: 2, .. })
+            Err(IniError::MalformedEntry { line: 2 })
         ));
         assert!(matches!(
             parse("= value\n"),
-            Err(IniError::MalformedEntry { line: 1, .. })
+            Err(IniError::MalformedEntry { line: 1 })
         ));
     }
-
 
     #[test]
     fn parse_errors_do_not_echo_raw_configuration_lines() {
         let secret_line = "pass_phrase hunter2";
         let error = parse(&format!("[DEFAULT]\n{secret_line}\n"))
             .expect_err("malformed secret line should be rejected");
-        assert!(!error.to_string().contains("hunter2"));
-        assert!(!error.to_string().contains(secret_line));
+        let display = error.to_string();
+        let debug = format!("{error:?}");
+        for rendered in [display, debug] {
+            assert!(!rendered.contains("hunter2"));
+            assert!(!rendered.contains(secret_line));
+        }
     }
 }
