@@ -412,6 +412,22 @@ pub async fn close(
             "the managed NSG has no rule for {rule}; nothing will be removed"
         ));
     }
+
+    // A rule covering more than the port asked about is removed whole — OCI has
+    // no way to subtract one port from a range — so closing 22 can also close
+    // 80 and 443. The plan lists the rule, but that is easy to skim past, so
+    // the consequence is spelled out.
+    for wider in matching
+        .iter()
+        .filter(|candidate| candidate.ports.width() > 1)
+    {
+        plan.add_warning(format!(
+            "the rule granting {rule} covers {} ({}), and OCI can only remove it whole; closing \
+             {rule} therefore also closes the rest of that range",
+            wider.ports,
+            wider.summary()
+        ));
+    }
     if !residual.is_empty() {
         plan.add_warning(format!(
             "{rule} will remain reachable after this change: {}",

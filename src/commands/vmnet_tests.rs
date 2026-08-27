@@ -907,3 +907,135 @@ async fn an_nsg_created_but_not_attached_is_reported_as_a_partial_mutation() {
         "no rule may be added to an NSG that is not attached"
     );
 }
+
+/// OCI cannot subtract one port from a range, so closing 22 on a rule covering
+/// 1-1024 closes the rest of it too. That consequence must be stated, not left
+/// for the user to infer from the rule summary.
+#[tokio::test]
+async fn closing_a_port_inside_a_wider_rule_warns_that_the_whole_range_goes() {
+    let wide_rule = json!({
+        "id": "WIDERULE",
+        "direction": "INGRESS",
+        "protocol": "6",
+        "source": "0.0.0.0/0",
+        "sourceType": "CIDR_BLOCK",
+        "isStateless": false,
+        "tcpOptions": { "destinationPortRange": { "min": 1, "max": 1024 } }
+    });
+    let mock = MockOci::builder()
+        .get(
+            "/vnicAttachments",
+            &json!([{
+                "id": "ocid1.vnicattachment.oc1.iad.a",
+                "instanceId": INSTANCE_ID,
+                "vnicId": VNIC_ID,
+                "lifecycleState": "ATTACHED"
+            }]),
+        )
+        .get(&format!("/instances/{INSTANCE_ID}"), &instance_json())
+        .get("/instances?", &json!([instance_json()]))
+        .get(
+            &format!("/vnics/{VNIC_ID}"),
+            &vnic_json(&[MANAGED_NSG_ID], Some("203.0.113.17")),
+        )
+        .get(&format!("/subnets/{SUBNET_ID}"), &subnet_json())
+        .route(
+            "GET",
+            &format!("/networkSecurityGroups/{MANAGED_NSG_ID}/securityRules"),
+            vec![Reply::json(&json!([wide_rule])), Reply::json(&json!([]))],
+        )
+        .get(
+            &format!("/networkSecurityGroups/{MANAGED_NSG_ID}"),
+            &managed_nsg_json(),
+        )
+        .get(
+            &format!("/securityLists/{SECURITY_LIST_ID}"),
+            &security_list_json(json!([])),
+        )
+        .get(
+            &format!("/routeTables/{ROUTE_TABLE_ID}"),
+            &route_table_json(),
+        )
+        .get(&format!("/internetGateways/{GATEWAY_ID}"), &gateway_json())
+        .reply("POST", "removeSecurityRules", Reply::new(200, ""))
+        .start()
+        .await;
+
+    let (plan, _) = close(&context(&mock), "free-arm-1", ssh(), true)
+        .await
+        .expect("close succeeds");
+
+    assert!(
+        plan.warnings
+            .iter()
+            .any(|warning| warning.contains("also closes the rest of that range")),
+        "the plan must say the whole range goes: {:?}",
+        plan.warnings
+    );
+    assert!(
+        plan.warnings
+            .iter()
+            .any(|warning| warning.contains("1-1024")),
+        "the warning must name the range: {:?}",
+        plan.warnings
+    );
+}
+
+/// A rule that covers exactly the port asked about needs no such warning.
+#[tokio::test]
+async fn closing_an_exact_rule_carries_no_range_warning() {
+    let mock = MockOci::builder()
+        .get(
+            "/vnicAttachments",
+            &json!([{
+                "id": "ocid1.vnicattachment.oc1.iad.a",
+                "instanceId": INSTANCE_ID,
+                "vnicId": VNIC_ID,
+                "lifecycleState": "ATTACHED"
+            }]),
+        )
+        .get(&format!("/instances/{INSTANCE_ID}"), &instance_json())
+        .get("/instances?", &json!([instance_json()]))
+        .get(
+            &format!("/vnics/{VNIC_ID}"),
+            &vnic_json(&[MANAGED_NSG_ID], Some("203.0.113.17")),
+        )
+        .get(&format!("/subnets/{SUBNET_ID}"), &subnet_json())
+        .route(
+            "GET",
+            &format!("/networkSecurityGroups/{MANAGED_NSG_ID}/securityRules"),
+            vec![
+                Reply::json(&json!([ssh_rule_json()])),
+                Reply::json(&json!([])),
+            ],
+        )
+        .get(
+            &format!("/networkSecurityGroups/{MANAGED_NSG_ID}"),
+            &managed_nsg_json(),
+        )
+        .get(
+            &format!("/securityLists/{SECURITY_LIST_ID}"),
+            &security_list_json(json!([])),
+        )
+        .get(
+            &format!("/routeTables/{ROUTE_TABLE_ID}"),
+            &route_table_json(),
+        )
+        .get(&format!("/internetGateways/{GATEWAY_ID}"), &gateway_json())
+        .reply("POST", "removeSecurityRules", Reply::new(200, ""))
+        .start()
+        .await;
+
+    let (plan, _) = close(&context(&mock), "free-arm-1", ssh(), true)
+        .await
+        .expect("close succeeds");
+
+    assert!(
+        !plan
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("rest of that range")),
+        "an exact rule needs no range warning: {:?}",
+        plan.warnings
+    );
+}
