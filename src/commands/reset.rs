@@ -486,8 +486,7 @@ where
         match probe().await {
             Ok(true) => return Ok(()),
             Ok(false) => {}
-            Err(error)
-                if retryable_probe(&error) && std::time::Instant::now() < deadline => {}
+            Err(error) if retryable_probe(&error) && std::time::Instant::now() < deadline => {}
             Err(error) => return Err(error),
         }
 
@@ -638,7 +637,10 @@ fn retryable_delete(error: &Error) -> bool {
 fn retryable_probe(error: &Error) -> bool {
     matches!(
         error.kind(),
-        ErrorKind::TransientServer | ErrorKind::RateLimited | ErrorKind::Network | ErrorKind::Timeout
+        ErrorKind::TransientServer
+            | ErrorKind::RateLimited
+            | ErrorKind::Network
+            | ErrorKind::Timeout
     )
 }
 
@@ -704,7 +706,10 @@ mod tests {
                         "vcnId": "ocid1.vcn.oc1.iad.a",
                         "lifecycleState": "TERMINATING"
                     })),
-                    Reply::new(404, r#"{"code":"NotAuthorizedOrNotFound","message":"gone"}"#),
+                    Reply::new(
+                        404,
+                        r#"{"code":"NotAuthorizedOrNotFound","message":"gone"}"#,
+                    ),
                 ],
             )
             .start()
