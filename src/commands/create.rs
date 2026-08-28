@@ -591,15 +591,26 @@ async fn apply(
             .await);
         }
     };
-    created.nsg_id = Some(nsg.clone());
+    created.nsg_id = Some(nsg.id.clone());
+
+    if let Err(error) = await_nsg_available(context, &nsg).await {
+        return Err(recover(
+            context,
+            &created,
+            error,
+            "the instance's network security group",
+        )
+        .await);
+    }
+    let nsg_id = nsg.id;
 
     if let Some(source) = &decision.ssh_source
-        && let Err(error) = add_ssh_rule(context, &nsg, source, approval).await
+        && let Err(error) = add_ssh_rule(context, &nsg_id, source, approval).await
     {
         return Err(recover(context, &created, error, "the SSH ingress rule").await);
     }
 
-    let instance = match launch(context, decision, &network, &nsg, approval).await {
+    let instance = match launch(context, decision, &network, &nsg_id, approval).await {
         Ok(instance) => instance,
         Err(error) => return Err(recover(context, &created, error, "the instance").await),
     };
@@ -620,11 +631,11 @@ async fn apply(
         exposure
             .attached_nsgs
             .iter()
-            .any(|attached| attached.id == nsg)
+            .any(|attached| attached.id == nsg_id)
     });
     if !nsg_verified {
         warnings.push(format!(
-            "the managed network security group {nsg} was not found attached to the instance's \
+            "the managed network security group {nsg_id} was not found attached to the instance's \
              VNIC; run `oci-free vm net {} show` to check",
             decision.name
         ));
@@ -661,7 +672,7 @@ async fn apply(
             .map(|address| format!("ssh opc@{address}")),
         public_ip,
         private_ip,
-        nsg_id: Some(nsg),
+        nsg_id: Some(nsg_id),
         nsg_verified,
         ssh_reachable,
         created,
@@ -718,20 +729,19 @@ async fn await_subnet_available(context: &CommandContext, subnet_id: &str) -> Re
         }
 
         if std::time::Instant::now() >= deadline {
-            return Err(Error::timeout(format!(
-                "the managed subnet did not become AVAILABLE before the network readiness deadline"
-            ))
+            return Err(Error::timeout(
+                "the managed subnet did not become AVAILABLE before the network readiness deadline",
+            )
             .with_context(format!("subnet {subnet_id} was {last_state}"))
-            .with_remediation("wait for OCI networking to finish provisioning, then retry `oci-free vm create`"));
+            .with_remediation(
+                "wait for OCI networking to finish provisioning, then retry `oci-free vm create`",
+            ));
         }
         tokio::time::sleep(poll.interval).await;
     }
 }
 
-async fn await_nsg_available(
-    context: &CommandContext,
-    nsg: &NetworkSecurityGroup,
-) -> Result<()> {
+async fn await_nsg_available(context: &CommandContext, nsg: &NetworkSecurityGroup) -> Result<()> {
     if nsg
         .lifecycle_state
         .as_deref()
@@ -781,7 +791,9 @@ async fn await_nsg_available(
                 "network security group {} was {last_state}",
                 nsg.id
             ))
-            .with_remediation("wait for OCI networking to finish provisioning, then retry `oci-free vm create`"));
+            .with_remediation(
+                "wait for OCI networking to finish provisioning, then retry `oci-free vm create`",
+            ));
         }
         tokio::time::sleep(poll.interval).await;
     }
@@ -792,9 +804,9 @@ async fn create_nsg(
     decision: &Decision,
     network: &ManagedNetwork,
     approval: &Approval,
-) -> Result<String> {
+) -> Result<NetworkSecurityGroup> {
     debug_assert!(approval.operation() == "vm.create");
-    let nsg = NetworkApi::new(context.client())
+    NetworkApi::new(context.client())
         .create_nsg(
             &CreateNsg {
                 compartment_id: context.tenancy().as_str().to_owned(),
@@ -804,9 +816,7 @@ async fn create_nsg(
             },
             &vmnet::retry_token("nsg", &decision.name),
         )
-        .await?;
-    await_nsg_available(context, &nsg).await?;
-    Ok(nsg.id)
+        .await
 }
 
 async fn add_ssh_rule(
