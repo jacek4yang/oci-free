@@ -77,7 +77,10 @@ pub async fn run(context: &CommandContext) -> Result<AccountInfo> {
                 .await
                 .map(|domains| domains.into_iter().map(|domain| domain.name).collect())
                 .unwrap_or_else(|error| {
-                    warnings.push(format!("could not list availability domains: {error}"));
+                    warnings.push(format!(
+                        "could not list availability domains: {}",
+                        diagnostic_error(&error)
+                    ));
                     Vec::new()
                 })
         }
@@ -132,7 +135,7 @@ pub fn render_human(info: &AccountInfo) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{AccountInfo, render_human};
+    use super::{AccountInfo, render_human, usage_unavailable};
 
     fn info() -> AccountInfo {
         AccountInfo {
@@ -182,6 +185,25 @@ mod tests {
         ] {
             assert!(value.get(key).is_some(), "missing field {key}");
         }
+    }
+
+    #[test]
+    fn usage_iam_guidance_requires_a_confirmed_oci_response() {
+        let oci_denial = crate::oci::error::from_response(
+            403,
+            "{}",
+            Some("req-usage-1".to_owned()),
+            "RequestSummarizedUsages",
+        );
+        let guidance = usage_unavailable(&oci_denial);
+        assert!(guidance.contains("IAM policy"));
+        assert!(guidance.contains("req-usage-1"));
+
+        let intermediary =
+            crate::oci::error::from_response(403, "Forbidden", None, "RequestSummarizedUsages");
+        let guidance = usage_unavailable(&intermediary);
+        assert!(guidance.contains("proxy or gateway"));
+        assert!(!guidance.contains("tenancy's IAM policy"));
     }
 }
 
@@ -244,7 +266,8 @@ pub async fn limits(context: &CommandContext, include_all: bool) -> Result<Limit
             Ok(definitions) => definitions,
             Err(error) => {
                 warnings.push(format!(
-                    "could not read limit definitions for `{service}`: {error}"
+                    "could not read limit definitions for `{service}`: {}",
+                    diagnostic_error(&error)
                 ));
                 Vec::new()
             }
@@ -254,7 +277,8 @@ pub async fn limits(context: &CommandContext, include_all: bool) -> Result<Limit
             Err(error) => {
                 warnings.push(format!(
                     "could not read limit values for `{service}`, so no {service} allowance is \
-                     shown: {error}"
+                     shown: {}",
+                    diagnostic_error(&error)
                 ));
                 continue;
             }
@@ -344,8 +368,9 @@ async fn build_row(
                 available = availability.availability();
             }
             Err(error) => warnings.push(format!(
-                "could not read current usage for `{}`: {error}",
-                value.name
+                "could not read current usage for `{}`: {}",
+                value.name,
+                diagnostic_error(&error)
             )),
         }
     }
@@ -497,15 +522,36 @@ pub async fn usage(context: &CommandContext) -> Result<UsageReport> {
 
 /// Explain an unusable usage response without blaming the wrong thing.
 pub(crate) fn usage_unavailable(error: &crate::error::Error) -> String {
-    match error.kind() {
-        crate::error::ErrorKind::Authorization => {
+    match (error.kind(), error.oci().request_id.as_deref()) {
+        (crate::error::ErrorKind::Authorization, Some(request_id)) => {
             "usage and cost data is unavailable: this tenancy's IAM policy does not grant the \
              Usage API. Ask an administrator for `allow group <g> to read usage-report in \
-             tenancy`."
+             tenancy`. OCI request id: "
                 .to_owned()
+                + request_id
         }
-        _ => format!("usage and cost data could not be read: {error}"),
+        _ => {
+            format!(
+                "usage and cost data could not be read: {}",
+                diagnostic_error(error)
+            )
+        }
     }
+}
+
+fn diagnostic_error(error: &crate::error::Error) -> String {
+    let mut detail = error.message().to_owned();
+    if let Some(context) = error.context() {
+        detail.push_str("; ");
+        detail.push_str(context);
+    }
+    if let Some(request_id) = &error.oci().request_id {
+        detail.push_str("; OCI request id: ");
+        detail.push_str(request_id);
+    }
+    detail.push_str("; next: ");
+    detail.push_str(error.remediation());
+    detail
 }
 
 /// Render `account usage` for a terminal.

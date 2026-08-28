@@ -166,6 +166,30 @@ async fn status_codes_map_to_error_categories() {
 }
 
 #[tokio::test]
+async fn an_intermediary_denial_names_the_endpoint_without_exposing_the_path() {
+    let mock = MockOci::start(vec![Reply::new(403, "Forbidden")]).await;
+    let client = mock.client_with(fast_retry(), TransportLimits::default());
+
+    let error = client
+        .get_json::<Widget>(
+            Service::Limits,
+            "/limitValues?compartmentId=secret-resource-id",
+            "ListLimitValues",
+        )
+        .await
+        .expect_err("the intermediary denial must surface");
+
+    assert_eq!(error.kind(), ErrorKind::Authorization);
+    assert!(error.oci().request_id.is_none());
+    let context = error.context().expect("diagnostic context");
+    assert!(context.contains(&format!("endpoint: https://127.0.0.1:{}", mock.port())));
+    assert!(context.contains("proxy or gateway"));
+    assert!(!context.contains("limitValues"));
+    assert!(!context.contains("secret-resource-id"));
+    assert!(!error.remediation().contains("IAM"));
+}
+
+#[tokio::test]
 async fn transient_server_errors_are_retried_then_surface() {
     for status in [500, 502, 503, 504] {
         let mock = MockOci::start(vec![Reply::new(status, r#"{"message":"later"}"#)]).await;
@@ -418,7 +442,17 @@ async fn connection_failures_are_classified_as_network_errors() {
         .await
         .expect_err("a refused connection must be an error");
     assert_eq!(error.kind(), ErrorKind::Network);
-    assert!(error.remediation().contains("connectivity"));
+    assert!(error.message().contains("Core service"));
+    let context = error.context().expect("endpoint context");
+    assert!(context.contains(&format!("endpoint: https://127.0.0.1:{port}")));
+    assert!(!context.contains("/widgets"));
+    for expected in ["DNS", "proxy", "TLS", "connectivity"] {
+        assert!(
+            error.remediation().contains(expected),
+            "remediation must name {expected}: {}",
+            error.remediation()
+        );
+    }
 }
 
 /// The transport must never disclose signing material through an error path.

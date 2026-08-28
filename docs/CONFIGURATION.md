@@ -99,9 +99,9 @@ $ oci-free doctor
 [     ok] Tenancy access: read tenancy ocid1.tenancy.oc1..…xk3q7a (example-tenancy)
 [     ok] Home region: this profile targets the home region us-ashburn-1
 [     ok] Availability domains: 3 domain(s) available: Uocm:US-ASHBURN-AD-1, ...
-[     ok] Compute read permission: listed 2 instance(s)
-[     ok] Networking read permission: listed 1 VCN(s)
-[warning] Service limits permission: service limits are unavailable: ...
+[     ok] Compute read access: listed 2 instance(s)
+[     ok] Networking read access: listed 1 VCN(s)
+[warning] Service limits access: service limits are unavailable: ...
           next: optional: `allow group <g> to read limits in tenancy` makes `account limits` work
 ```
 

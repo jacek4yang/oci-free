@@ -32,9 +32,11 @@ decides policy.
 
 Owns HTTP concerns only:
 
-- region/service endpoint construction, with the realm taken from the tenancy
-  OCID rather than guessed from a region table, so an unknown realm fails closed
-  instead of sending a signed credential to a host Oracle does not control;
+- service-specific endpoint construction, with the realm taken from the
+  tenancy OCID rather than guessed from a region table. Identity/Core and
+  Limits/Usage use different documented hostname styles; an unknown realm or
+  unverified realm/service combination fails closed instead of sending a
+  signed credential to a host Oracle does not control;
 - OCI RSA-SHA256 request signing, via `ring` — see
   [`SECURITY.md`](SECURITY.md#dependency-advisories);
 - headers and body digests;
@@ -48,6 +50,13 @@ Three properties are enforced here so no command can weaken them: HTTPS only,
 redirects never followed (a signature is bound to one host and path), and
 response bodies bounded. Only provably replay-safe requests are retried — a
 write qualifies only when it carries an OCI retry token.
+
+Endpoint authority is a credential boundary. `EndpointResolver` is the only
+production code that constructs OCI authorities, and `Service` selects the
+hostname style. Resolution is allowlisted and rule-driven: it never probes
+arbitrary DNS names, follows a redirect to discover a service, or guesses a
+template for an unknown realm. A diagnostic may display the scheme and
+authority that failed, but omits the request path and query.
 
 It must not decide whether a resource is free.
 
