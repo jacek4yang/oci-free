@@ -484,9 +484,7 @@ pub async fn compensate(
             &deletion,
             Err(error) if error.kind() == ErrorKind::Conflict
         );
-        if route_conflict
-            && let Some(vcn_id) = created.vcn_id.as_deref()
-        {
+        if route_conflict && let Some(vcn_id) = created.vcn_id.as_deref() {
             match detach_gateway_routes(context, vcn_id, id).await {
                 Ok(()) => deletion = api.delete_internet_gateway(id).await,
                 Err(error) => problems.push(format!(
