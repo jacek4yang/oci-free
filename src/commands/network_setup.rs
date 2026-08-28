@@ -25,7 +25,7 @@ use crate::{
         },
         plan::{Approval, ChangeKind, PlannedChange},
     },
-    error::{Error, Result},
+    error::{Error, ErrorKind, Result},
     oci::network::{
         CreateInternetGateway, CreateSubnet, CreateVcn, InternetGateway, NetworkApi,
         RouteRuleUpdate, Subnet, UpdateRouteTable, Vcn,
@@ -404,6 +404,52 @@ pub async fn provision(
     })
 }
 
+async fn detach_gateway_routes(
+    context: &CommandContext,
+    vcn_id: &str,
+    gateway_id: &str,
+) -> Result<()> {
+    let api = NetworkApi::new(context.client());
+    let vcn = api.get_vcn(vcn_id).await?;
+    let route_table_id = vcn.default_route_table_id.ok_or_else(|| {
+        Error::malformed_response("the managed VCN has no default route table during rollback")
+            .with_context(format!("VCN {vcn_id}"))
+    })?;
+    let table = api.get_route_table(&route_table_id).await?;
+    let mut remaining = Vec::new();
+
+    for rule in table.route_rules {
+        if rule.network_entity_id.as_deref() == Some(gateway_id) {
+            continue;
+        }
+        let (Some(destination), Some(destination_type), Some(network_entity_id)) = (
+            rule.destination,
+            rule.destination_type,
+            rule.network_entity_id,
+        ) else {
+            return Err(Error::malformed_response(
+                "the managed route table contains a rule that cannot be preserved safely during rollback",
+            )
+            .with_context(format!("route table {route_table_id}")));
+        };
+        remaining.push(RouteRuleUpdate {
+            destination,
+            destination_type,
+            network_entity_id,
+            description: rule.description,
+        });
+    }
+
+    api.update_route_table(
+        &route_table_id,
+        &UpdateRouteTable {
+            route_rules: remaining,
+        },
+    )
+    .await?;
+    Ok(())
+}
+
 /// Delete, in reverse order, only what this operation created.
 ///
 /// Returns whatever could not be removed, so the caller can report exactly what
@@ -432,13 +478,28 @@ pub async fn compensate(
         retained.subnet_id = Some(id.clone());
         problems.push(format!("subnet {id} could not be removed: {error}"));
     }
-    if let Some(id) = &created.internet_gateway_id
-        && let Err(error) = api.delete_internet_gateway(id).await
-    {
-        retained.internet_gateway_id = Some(id.clone());
-        problems.push(format!(
-            "internet gateway {id} could not be removed: {error}"
-        ));
+    if let Some(id) = &created.internet_gateway_id {
+        let mut deletion = api.delete_internet_gateway(id).await;
+        let route_conflict = matches!(
+            &deletion,
+            Err(error) if error.kind() == ErrorKind::Conflict
+        );
+        if route_conflict
+            && let Some(vcn_id) = created.vcn_id.as_deref()
+        {
+            match detach_gateway_routes(context, vcn_id, id).await {
+                Ok(()) => deletion = api.delete_internet_gateway(id).await,
+                Err(error) => problems.push(format!(
+                    "route references to internet gateway {id} could not be removed: {error}"
+                )),
+            }
+        }
+        if let Err(error) = deletion {
+            retained.internet_gateway_id = Some(id.clone());
+            problems.push(format!(
+                "internet gateway {id} could not be removed: {error}"
+            ));
+        }
     }
     if let Some(id) = &created.vcn_id
         && let Err(error) = api.delete_vcn(id).await
@@ -460,3 +521,103 @@ pub async fn compensate(
 #[cfg(test)]
 #[path = "network_setup_tests.rs"]
 mod network_setup_tests;
+
+#[cfg(test)]
+mod rollback_regression_tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::testing::mock_oci::{MockOci, Reply, TENANCY};
+
+    #[tokio::test]
+    async fn a_gateway_route_conflict_is_detached_and_the_delete_is_retried() {
+        let vcn_id = "ocid1.vcn.oc1.iad.rollback";
+        let subnet_id = "ocid1.subnet.oc1.iad.rollback";
+        let gateway_id = "ocid1.internetgateway.oc1.iad.rollback";
+        let route_table_id = "ocid1.routetable.oc1.iad.rollback";
+
+        let mock = MockOci::builder()
+            .reply("DELETE", "/subnets/", Reply::new(204, ""))
+            .route(
+                "DELETE",
+                "/internetGateways/",
+                vec![
+                    Reply::new(
+                        409,
+                        r#"{"code":"Conflict","message":"route table references gateway"}"#,
+                    )
+                    .header("opc-request-id", "req-conflict"),
+                    Reply::new(204, ""),
+                ],
+            )
+            .get(
+                &format!("/vcns/{vcn_id}"),
+                &json!({
+                    "id": vcn_id,
+                    "compartmentId": TENANCY,
+                    "defaultRouteTableId": route_table_id,
+                    "lifecycleState": "AVAILABLE"
+                }),
+            )
+            .get(
+                &format!("/routeTables/{route_table_id}"),
+                &json!({
+                    "id": route_table_id,
+                    "vcnId": vcn_id,
+                    "routeRules": [{
+                        "destination": "0.0.0.0/0",
+                        "destinationType": "CIDR_BLOCK",
+                        "networkEntityId": gateway_id,
+                        "description": "oci-free managed: default route to the internet"
+                    }],
+                    "lifecycleState": "AVAILABLE"
+                }),
+            )
+            .reply(
+                "PUT",
+                &format!("/routeTables/{route_table_id}"),
+                Reply::json(&json!({
+                    "id": route_table_id,
+                    "vcnId": vcn_id,
+                    "routeRules": [],
+                    "lifecycleState": "AVAILABLE"
+                })),
+            )
+            .reply("DELETE", "/vcns/", Reply::new(204, ""))
+            .start()
+            .await;
+
+        let created = CreatedResources {
+            vcn_id: Some(vcn_id.to_owned()),
+            subnet_id: Some(subnet_id.to_owned()),
+            internet_gateway_id: Some(gateway_id.to_owned()),
+            ..CreatedResources::default()
+        };
+
+        let (retained, problems) = compensate(
+            &CommandContext::for_tests(mock.client(), "us-ashburn-1"),
+            &created,
+        )
+        .await;
+        assert!(retained.is_empty(), "retained: {:?}", retained.describe());
+        assert!(problems.is_empty(), "problems: {problems:?}");
+
+        let writes = mock.writes();
+        let route_update = writes
+            .iter()
+            .find(|request| request.method() == "PUT")
+            .expect("rollback must remove the gateway route");
+        assert_eq!(
+            route_update.json_body().expect("route body")["routeRules"],
+            json!([])
+        );
+        assert_eq!(
+            writes
+                .iter()
+                .filter(|request| request.target().contains("/internetGateways/"))
+                .count(),
+            2,
+            "the gateway delete should be retried after detaching its route"
+        );
+    }
+}
