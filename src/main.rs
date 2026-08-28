@@ -1,12 +1,4 @@
 //! `oci-free` entry point.
-//!
-//! Dispatch keeps three responsibilities in one place: choose human or JSON
-//! rendering, map every failure onto a documented exit code, and never let a
-//! command print a bare error without guidance.
-//!
-//! Every command in the v1 surface is wired to a real implementation. There is
-//! no placeholder path: a command that cannot do its job reports a classified
-//! failure with a next action, never a success-shaped result.
 
 mod cli;
 
@@ -20,7 +12,7 @@ use cli::{
 use oci_free::{
     commands::{
         account, config_init, context::CommandContext, cost, create, delete, doctor, free, policy,
-        ssh, status, vm, vmlifecycle, vmnet,
+        reset, ssh, status, vm, vmlifecycle, vmnet,
     },
     config::Environment,
     domain::{audit::Severity, network::PortRule},
@@ -32,10 +24,6 @@ use serde::Serialize;
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-
-    // A single multi-threaded runtime for the whole process. Building it here
-    // rather than with #[tokio::main] keeps startup cheap for commands like
-    // `--help` that never touch the network.
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -46,13 +34,11 @@ fn main() -> ExitCode {
             return ExitCodeKind::Failure.exit_code();
         }
     };
-
     runtime.block_on(dispatch(&cli))
 }
 
 async fn dispatch(cli: &Cli) -> ExitCode {
     let command = command_id(&cli.command);
-
     match run(cli).await {
         Ok(code) => code,
         Err(error) => {
@@ -66,32 +52,34 @@ async fn dispatch(cli: &Cli) -> ExitCode {
     }
 }
 
-/// Run the selected command, returning the process exit code.
-///
-/// Most commands exit 0 on success. `doctor` and `vm net audit` are the
-/// exceptions: their whole purpose is to report a problem, so they carry the
-/// verdict in the exit code as well as the output.
 #[allow(clippy::too_many_lines)]
 async fn run(cli: &Cli) -> Result<ExitCode> {
     let success = ExitCodeKind::Success.exit_code();
-
     match &cli.command {
         Command::Doctor => run_doctor(cli).await,
-
         Command::Status => {
             let context = context(cli)?;
             let report = status::run(&context).await?;
             emit(cli, "status", &report, status::render_human(&report))?;
             Ok(success)
         }
-
         Command::Cost => {
             let context = context(cli)?;
             let report = cost::run(&context).await?;
             emit(cli, "cost", &report, cost::render_human(&report))?;
             Ok(success)
         }
-
+        Command::Reset { yes } => {
+            let context = context(cli)?;
+            let (_, result) =
+                reset::run(&context, reset::ResetRequest { assume_yes: *yes }).await?;
+            emit(cli, "reset", &result, reset::render_human(&result))?;
+            Ok(if result.retained == 0 {
+                success
+            } else {
+                ExitCodeKind::Partial.exit_code()
+            })
+        }
         Command::Account { command } => match command {
             AccountCommand::Info => {
                 let context = context(cli)?;
@@ -122,7 +110,6 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
                 Ok(success)
             }
         },
-
         Command::Free {
             command: FreeCommand::List,
         } => {
@@ -131,7 +118,6 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             emit(cli, "free.list", &report, free::render_human(&report))?;
             Ok(success)
         }
-
         Command::Policy {
             command:
                 PolicyCommand::Explain {
@@ -140,10 +126,6 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
                     memory,
                 },
         } => {
-            // Validate the arguments before touching configuration: a typo is
-            // a usage error whether or not a profile happens to exist, and
-            // reporting it as a configuration failure sends the user to fix
-            // the wrong thing.
             let projection = policy::parse_projection(*ocpus, *memory)?;
             let context = context(cli)?;
             let explanation = policy::explain(&context, resource, projection).await?;
@@ -155,7 +137,6 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             )?;
             Ok(success)
         }
-
         Command::Config { command } => match command {
             ConfigCommand::Init(args) => {
                 let env = Environment::from_process();
@@ -196,7 +177,6 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
                 Ok(success)
             }
         },
-
         Command::Vm { command } => run_vm(cli, command).await,
     }
 }
@@ -204,7 +184,6 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
 #[allow(clippy::too_many_lines)]
 async fn run_vm(cli: &Cli, command: &VmCommand) -> Result<ExitCode> {
     let success = ExitCodeKind::Success.exit_code();
-
     match command {
         VmCommand::List => {
             let context = context(cli)?;
@@ -212,21 +191,18 @@ async fn run_vm(cli: &Cli, command: &VmCommand) -> Result<ExitCode> {
             emit(cli, "vm.list", &list, vm::render_human(&list))?;
             Ok(success)
         }
-
         VmCommand::Info { instance } => {
             let context = context(cli)?;
             let info = vm::info(&context, instance).await?;
             emit(cli, "vm.info", &info, vm::render_info(&info))?;
             Ok(success)
         }
-
         VmCommand::Ip { instance } => {
             let context = context(cli)?;
             let ip = vm::ip(&context, instance).await?;
             emit(cli, "vm.ip", &ip, vm::render_ip(&ip))?;
             Ok(success)
         }
-
         VmCommand::Ssh {
             instance,
             user,
@@ -234,8 +210,6 @@ async fn run_vm(cli: &Cli, command: &VmCommand) -> Result<ExitCode> {
             print,
         } => {
             let context = context(cli)?;
-            // JSON mode must be usable in a pipeline, so it never takes over the
-            // terminal with an interactive session.
             let mode = if *print || cli.json {
                 ssh::SshMode::Print
             } else {
@@ -244,8 +218,6 @@ async fn run_vm(cli: &Cli, command: &VmCommand) -> Result<ExitCode> {
             let target =
                 ssh::run(&context, instance, user.as_deref(), identity.as_ref(), mode).await?;
             emit(cli, "vm.ssh", &target, ssh::render_human(&target))?;
-            // Pass the SSH client's own exit code through, so a script wrapping
-            // `oci-free vm ssh` behaves like one wrapping `ssh`.
             Ok(match target.exit_code {
                 Some(code) if code != 0 => {
                     ExitCode::from(u8::try_from(code).unwrap_or(ExitCodeKind::Failure.code()))
@@ -253,11 +225,12 @@ async fn run_vm(cli: &Cli, command: &VmCommand) -> Result<ExitCode> {
                 _ => success,
             })
         }
-
         VmCommand::Create(args) => {
             let context = create_context(cli, args)?;
             let request = create::CreateRequest {
                 name: args.name.clone(),
+                username: args.username.clone(),
+                hostname: args.hostname.clone(),
                 shape: args.shape.clone(),
                 ocpus: args.ocpus,
                 memory: args.memory,
@@ -272,7 +245,6 @@ async fn run_vm(cli: &Cli, command: &VmCommand) -> Result<ExitCode> {
             emit(cli, "vm.create", &result, create::render_human(&result))?;
             Ok(success)
         }
-
         VmCommand::Delete {
             instance,
             keep_boot_volume,
@@ -291,7 +263,6 @@ async fn run_vm(cli: &Cli, command: &VmCommand) -> Result<ExitCode> {
             emit(cli, "vm.delete", &result, delete::render_human(&result))?;
             Ok(success)
         }
-
         VmCommand::Start { instance, yes } => {
             lifecycle(
                 cli,
@@ -301,28 +272,22 @@ async fn run_vm(cli: &Cli, command: &VmCommand) -> Result<ExitCode> {
             )
             .await
         }
-
         VmCommand::Stop {
             instance,
             force,
             yes,
         } => lifecycle(cli, instance, vmlifecycle::stop_action(*force), *yes).await,
-
         VmCommand::Reboot {
             instance,
             force,
             yes,
         } => lifecycle(cli, instance, vmlifecycle::reboot_action(*force), *yes).await,
-
         VmCommand::Net { instance, command } => run_vm_net(cli, instance, command).await,
     }
 }
 
 async fn run_vm_net(cli: &Cli, instance: &str, command: &VmNetCommand) -> Result<ExitCode> {
     let success = ExitCodeKind::Success.exit_code();
-
-    // Parse the rule first, for the same reason as above: `443` without a
-    // protocol is a usage error, not a configuration problem.
     let rule = match command {
         VmNetCommand::Open { rule, .. } | VmNetCommand::Close { rule, .. } => {
             Some(parse_rule(rule)?)
@@ -330,26 +295,21 @@ async fn run_vm_net(cli: &Cli, instance: &str, command: &VmNetCommand) -> Result
         VmNetCommand::Show | VmNetCommand::Audit => None,
     };
     let context = context(cli)?;
-
     match command {
         VmNetCommand::Show => {
             let show = vmnet::show(&context, instance).await?;
             emit(cli, "vm.net.show", &show, vmnet::render_show(&show))?;
             Ok(success)
         }
-
         VmNetCommand::Audit => {
             let result = vmnet::run_audit(&context, instance).await?;
             emit(cli, "vm.net.audit", &result, vmnet::render_audit(&result))?;
-            // An audit that found something exits non-zero so a scheduled run
-            // can alert on it without parsing the output.
             Ok(if vmnet::audit_severity(&result) >= Severity::Warning {
                 ExitCodeKind::Safety.exit_code()
             } else {
                 success
             })
         }
-
         VmNetCommand::Open { source, yes, .. } => {
             let rule = rule.expect("the rule was parsed above");
             let (_, change) =
@@ -357,7 +317,6 @@ async fn run_vm_net(cli: &Cli, instance: &str, command: &VmNetCommand) -> Result
             emit(cli, "vm.net.open", &change, vmnet::render_change(&change))?;
             Ok(success)
         }
-
         VmNetCommand::Close { yes, .. } => {
             let rule = rule.expect("the rule was parsed above");
             let (_, change) = vmnet::close(&context, instance, rule, *yes).await?;
@@ -391,7 +350,6 @@ fn parse_rule(rule: &str) -> Result<PortRule> {
 
 fn context(cli: &Cli) -> Result<CommandContext> {
     let context = CommandContext::load(&Environment::from_process(), &cli.config_options())?;
-    // JSON output implies automation: prompting into a pipe would hang.
     Ok(if cli.json {
         context.non_interactive()
     } else {
@@ -408,7 +366,6 @@ fn create_context(cli: &Cli, args: &CreateArgs) -> Result<CommandContext> {
     })
 }
 
-/// Print a payload as JSON or human text.
 fn emit<T: Serialize>(cli: &Cli, command: &str, data: &T, human: String) -> Result<()> {
     if cli.json {
         let envelope = Envelope::success(command, data);
@@ -426,20 +383,9 @@ fn emit<T: Serialize>(cli: &Cli, command: &str, data: &T, human: String) -> Resu
     Ok(())
 }
 
-/// `doctor` reports its verdict in the payload and the exit code, not as an
-/// error.
-///
-/// The report *is* the answer, including when it is bad news, so emitting a
-/// failure envelope alongside it would put two JSON documents on stdout and
-/// break the contract in `docs/JSON.md`. The human rendering already ends with
-/// a line saying what to do, so an extra error block would only repeat it.
 async fn run_doctor(cli: &Cli) -> Result<ExitCode> {
     let report = doctor::run_with_live(&Environment::from_process(), &cli.config_options()).await;
-
     if cli.json {
-        // The same envelope every other command uses, with the failing and
-        // warning checks surfaced as warnings so a consumer need not walk the
-        // whole list to know something needs attention.
         let envelope =
             Envelope::success("doctor", &report).with_warnings(doctor::advisories(&report));
         let rendered = envelope.render().map_err(|error| {
@@ -453,7 +399,6 @@ async fn run_doctor(cli: &Cli) -> Result<ExitCode> {
     } else {
         print!("{}", doctor::render_human(&report));
     }
-
     Ok(if report.is_healthy() {
         ExitCodeKind::Success.exit_code()
     } else {
@@ -461,15 +406,9 @@ async fn run_doctor(cli: &Cli) -> Result<ExitCode> {
     })
 }
 
-/// Explain why `--generate-key` is not offered.
-///
-/// The OCI Console generates the pair, shows the fingerprint, and hands over
-/// the private key in one step with no local toolchain, so shipping a second
-/// way to make a key would add risk without adding capability.
 fn key_generation_unsupported() -> Error {
     let mut context = String::from(
-        "oci-free does not generate API keys. The OCI Console does it in one step, with no \
-         Python, OpenSSL, or OCI CLI needed:",
+        "oci-free does not generate API keys. The OCI Console does it in one step, with no Python, OpenSSL, or OCI CLI needed:",
     );
     for step in config_init::key_advice() {
         context.push_str(&format!("\n  - {step}"));
@@ -479,12 +418,12 @@ fn key_generation_unsupported() -> Error {
         .with_remediation("create the key in the OCI Console, then re-run `oci-free config init`")
 }
 
-/// Stable dotted command identifier used in JSON output.
 fn command_id(command: &Command) -> String {
     match command {
         Command::Status => "status".to_owned(),
         Command::Doctor => "doctor".to_owned(),
         Command::Cost => "cost".to_owned(),
+        Command::Reset { .. } => "reset".to_owned(),
         Command::Free { command } => match command {
             FreeCommand::List => "free.list".to_owned(),
         },

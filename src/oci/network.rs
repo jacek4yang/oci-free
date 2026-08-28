@@ -45,15 +45,10 @@ pub struct Vnic {
     pub subnet_id: Option<String>,
     #[serde(default)]
     pub private_ip: Option<String>,
-    /// The ephemeral or reserved public IP currently on this VNIC.
-    ///
-    /// Absent means no public address, which is a normal state, not a decoding
-    /// failure.
     #[serde(default)]
     pub public_ip: Option<String>,
     #[serde(default)]
     pub is_primary: Option<bool>,
-    /// Network Security Groups attached to this VNIC.
     #[serde(default)]
     pub nsg_ids: Vec<String>,
     #[serde(default)]
@@ -67,7 +62,6 @@ pub struct Vnic {
 }
 
 impl Vnic {
-    /// Whether OCI has given this VNIC a routable public address.
     #[must_use]
     pub fn has_public_ip(&self) -> bool {
         self.public_ip
@@ -76,7 +70,6 @@ impl Vnic {
     }
 }
 
-/// `GET /20160918/subnets/{subnetId}`
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Subnet {
@@ -92,7 +85,6 @@ pub struct Subnet {
     pub route_table_id: Option<String>,
     #[serde(default)]
     pub security_list_ids: Vec<String>,
-    /// True for a private subnet: OCI refuses to assign public IPs in it.
     #[serde(default)]
     pub prohibit_public_ip_on_vnic: Option<bool>,
     #[serde(default)]
@@ -106,20 +98,17 @@ pub struct Subnet {
 }
 
 impl Subnet {
-    /// Whether this subnet forbids public addressing.
     #[must_use]
     pub fn is_private(&self) -> bool {
         self.prohibit_public_ip_on_vnic.unwrap_or(false)
     }
 
-    /// Whether the subnet spans the whole region rather than one domain.
     #[must_use]
     pub fn is_regional(&self) -> bool {
         self.availability_domain.is_none()
     }
 }
 
-/// `GET /20160918/vcns/{vcnId}`
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Vcn {
@@ -142,7 +131,6 @@ pub struct Vcn {
     pub freeform_tags: Tags,
 }
 
-/// `GET /20160918/networkSecurityGroups/{id}`
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkSecurityGroup {
@@ -159,11 +147,6 @@ pub struct NetworkSecurityGroup {
     pub freeform_tags: Tags,
 }
 
-/// A port range in an NSG or Security List rule.
-///
-/// OCI omits `min` when the range is open-ended at the bottom, so both bounds
-/// are optional and an absent bound is treated as wide open by the exposure
-/// model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PortRange {
@@ -182,14 +165,12 @@ impl PortRange {
         }
     }
 
-    /// Whether this range covers `port`, treating an absent bound as unbounded.
     #[must_use]
     pub fn contains(&self, port: u16) -> bool {
         self.min.is_none_or(|min| port >= min) && self.max.is_none_or(|max| port <= max)
     }
 }
 
-/// TCP or UDP options on a rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransportOptions {
@@ -199,7 +180,6 @@ pub struct TransportOptions {
     pub source_port_range: Option<PortRange>,
 }
 
-/// ICMP options on a rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IcmpOptions {
@@ -209,15 +189,12 @@ pub struct IcmpOptions {
     pub code: Option<i32>,
 }
 
-/// One rule of `GET /networkSecurityGroups/{id}/securityRules`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SecurityRule {
-    /// OCI-assigned rule id, needed to remove the rule again.
     #[serde(default)]
     pub id: Option<String>,
     pub direction: String,
-    /// IANA protocol number as a string, or `all`.
     pub protocol: String,
     #[serde(default)]
     pub source: Option<String>,
@@ -246,10 +223,6 @@ impl SecurityRule {
     }
 }
 
-/// One ingress rule inside a Security List.
-///
-/// Security List rules have no identifier: the whole list is replaced on
-/// update. That is one reason oci-free never edits them as a convenience.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IngressSecurityRule {
@@ -270,7 +243,6 @@ pub struct IngressSecurityRule {
     pub description: Option<String>,
 }
 
-/// `GET /20160918/securityLists/{securityListId}`
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SecurityList {
@@ -289,7 +261,6 @@ pub struct SecurityList {
     pub freeform_tags: Tags,
 }
 
-/// One rule of a route table.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RouteRule {
@@ -304,14 +275,12 @@ pub struct RouteRule {
 }
 
 impl RouteRule {
-    /// Whether this rule is a default route to the whole IPv4 internet.
     #[must_use]
     pub fn is_default_ipv4(&self) -> bool {
         self.destination.as_deref() == Some("0.0.0.0/0")
     }
 }
 
-/// `GET /20160918/routeTables/{rtId}`
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RouteTable {
@@ -330,7 +299,6 @@ pub struct RouteTable {
     pub freeform_tags: Tags,
 }
 
-/// `GET /20160918/internetGateways/{igwId}`
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InternetGateway {
@@ -350,10 +318,6 @@ pub struct InternetGateway {
 }
 
 impl InternetGateway {
-    /// Whether traffic can actually leave through this gateway.
-    ///
-    /// A disabled gateway still appears in a route rule, so a route alone does
-    /// not prove reachability.
     #[must_use]
     pub fn is_usable(&self) -> bool {
         self.is_enabled.unwrap_or(true)
@@ -364,11 +328,6 @@ impl InternetGateway {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Write request bodies
-// ---------------------------------------------------------------------------
-
-/// One rule submitted to `AddNetworkSecurityGroupSecurityRules`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AddSecurityRule {
@@ -448,7 +407,6 @@ pub struct CreateInternetGateway {
     pub freeform_tags: Tags,
 }
 
-/// A route rule as sent to `UpdateRouteTable`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RouteRuleUpdate {
@@ -471,7 +429,6 @@ pub struct UpdateVnic {
     pub nsg_ids: Vec<String>,
 }
 
-/// Read and write operations against the virtual-network service.
 #[derive(Debug)]
 pub struct NetworkApi<'a> {
     client: &'a OciClient,
@@ -482,8 +439,6 @@ impl<'a> NetworkApi<'a> {
     pub fn new(client: &'a OciClient) -> Self {
         Self { client }
     }
-
-    // -- reads --------------------------------------------------------------
 
     pub async fn get_vnic(&self, vnic_id: &str) -> Result<Vnic> {
         let path = format!("/vnics/{}", encode_path_segment(vnic_id));
@@ -548,7 +503,6 @@ impl<'a> NetworkApi<'a> {
             .body)
     }
 
-    /// Ingress rules of one NSG.
     pub async fn list_nsg_ingress_rules(&self, nsg_id: &str) -> Result<Vec<SecurityRule>> {
         let path = format!(
             "/networkSecurityGroups/{}/securityRules?direction=INGRESS",
@@ -563,7 +517,6 @@ impl<'a> NetworkApi<'a> {
             .await
     }
 
-    /// Every rule of one NSG, both directions.
     pub async fn list_nsg_rules(&self, nsg_id: &str) -> Result<Vec<SecurityRule>> {
         let path = format!(
             "/networkSecurityGroups/{}/securityRules",
@@ -629,20 +582,13 @@ impl<'a> NetworkApi<'a> {
             .await
     }
 
-    // -- writes -------------------------------------------------------------
-
-    /// Add ingress rules to one NSG.
-    ///
-    /// This is the only rule-writing entry point used by `vm net open`, and it
-    /// addresses exactly one NSG, which is what makes the change instance
-    /// scoped.
     pub async fn add_nsg_rules(
         &self,
         nsg_id: &str,
         rules: Vec<AddSecurityRule>,
     ) -> Result<Option<String>> {
         let path = format!(
-            "/networkSecurityGroups/{}/securityRules/actions/addSecurityRules",
+            "/networkSecurityGroups/{}/actions/addSecurityRules",
             encode_path_segment(nsg_id)
         );
         self.client
@@ -658,10 +604,9 @@ impl<'a> NetworkApi<'a> {
             .await
     }
 
-    /// Remove rules from one NSG by rule id.
     pub async fn remove_nsg_rules(&self, nsg_id: &str, rule_ids: Vec<String>) -> Result<()> {
         let path = format!(
-            "/networkSecurityGroups/{}/securityRules/actions/removeSecurityRules",
+            "/networkSecurityGroups/{}/actions/removeSecurityRules",
             encode_path_segment(nsg_id)
         );
         self.client
@@ -762,7 +707,6 @@ impl<'a> NetworkApi<'a> {
             .body)
     }
 
-    /// Replace the set of NSGs attached to a VNIC.
     pub async fn update_vnic_nsgs(&self, vnic_id: &str, nsg_ids: Vec<String>) -> Result<Vnic> {
         let path = format!("/vnics/{}", encode_path_segment(vnic_id));
         Ok(self

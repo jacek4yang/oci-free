@@ -1,13 +1,16 @@
 //! `oci-free vm ssh <instance>` — connect to an instance.
 //!
 //! The connection details are discovered rather than asked for: the public
-//! address comes from the instance's VNIC, and the login name from the image's
-//! operating system.
+//! address comes from the instance's VNIC, and the login name first comes from
+//! the oci-free launch metadata tag, then falls back to the image's operating
+//! system default.
 //!
 //! The command line is built as an **argument vector and handed to the OS
 //! process API directly**. Nothing is ever concatenated into a shell string, so
 //! a display name, hostname, or user name containing shell metacharacters is
-//! passed through as one opaque argument and cannot become a command.
+//! passed through as one opaque argument and cannot become a command. The login
+//! name is supplied as the value of OpenSSH's `-l` option rather than placed in
+//! option position as part of `user@host`.
 //!
 //! In `--json` mode the process is not launched. A machine-readable command
 //! whose side effect is stealing the terminal would be unusable in a pipeline,
@@ -25,6 +28,10 @@ use crate::{
     error::{Error, Result},
     oci::compute::ComputeApi,
 };
+
+/// Written by `vm create --username`; using a tag keeps `vm ssh` stateless and
+/// lets it recover the intended login user after a later process invocation.
+const TAG_SSH_USER: &str = "oci-free:ssh-user";
 
 /// Default login names by operating system.
 ///
@@ -112,9 +119,12 @@ pub async fn run(
         command.push("-i".to_owned());
         command.push(identity.display().to_string());
     }
-    // `--` ends option parsing, so a user name that begins with a dash cannot
-    // be read by ssh as a flag.
-    command.push(format!("{user}@{host}"));
+    // Keep the user name in a value slot even when an explicit --user or a
+    // manually edited OCI tag begins with `-`. The public address is a parsed IP,
+    // so it is safe as the final destination operand.
+    command.push("-l".to_owned());
+    command.push(user.clone());
+    command.push(host.clone());
 
     if let Some(exposure) = network.exposure()
         && !exposure.allows("22/tcp".parse().expect("a valid rule"))
@@ -152,8 +162,8 @@ async fn launch(mut target: SshTarget) -> Result<SshTarget> {
         .split_first()
         .expect("the command always starts with the program name");
 
-    // Arguments are passed as a vector: no shell is involved, so nothing in a
-    // host name or user name can be interpreted as a command.
+    // Arguments are passed as a vector: no shell is involved, and the login
+    // name occupies the argument consumed by `-l` rather than an option slot.
     let status = tokio::process::Command::new(program)
         .args(arguments)
         .status()
@@ -180,11 +190,19 @@ async fn launch(mut target: SshTarget) -> Result<SshTarget> {
     Ok(target)
 }
 
-/// The login name for an instance's image.
+/// The login name for an instance.
 async fn default_user(
     context: &CommandContext,
     instance: &crate::oci::compute::Instance,
 ) -> (String, Option<String>) {
+    if let Some(user) = instance
+        .freeform_tags
+        .get(TAG_SSH_USER)
+        .filter(|value| !value.trim().is_empty())
+    {
+        return (user.clone(), None);
+    }
+
     let Some(image_id) = instance.image_id.as_deref() else {
         return (
             "opc".to_owned(),

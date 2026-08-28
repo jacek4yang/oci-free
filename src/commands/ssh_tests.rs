@@ -88,8 +88,22 @@ async fn discovers_the_address_and_the_images_default_login_name() {
 
     assert_eq!(target.host, "203.0.113.17");
     assert_eq!(target.user, "opc");
-    assert_eq!(target.command, vec!["ssh", "opc@203.0.113.17"]);
+    assert_eq!(target.command, vec!["ssh", "-l", "opc", "203.0.113.17"]);
     assert!(!target.launched, "print mode must not launch anything");
+}
+
+#[tokio::test]
+async fn a_custom_launch_username_is_reused_by_vm_ssh() {
+    let mock = mock(Some("203.0.113.17"), "Oracle Linux").await;
+    let mut instance: crate::oci::compute::Instance =
+        serde_json::from_value(instance_json()).expect("instance");
+    instance
+        .freeform_tags
+        .insert("oci-free:ssh-user".to_owned(), "jacek".to_owned());
+
+    let (user, warning) = default_user(&context(&mock), &instance).await;
+    assert_eq!(user, "jacek");
+    assert!(warning.is_none());
 }
 
 #[tokio::test]
@@ -149,8 +163,31 @@ async fn an_explicit_user_and_identity_are_used_verbatim() {
             "ssh",
             "-i",
             "/home/me/.ssh/id_ed25519",
-            "deploy@203.0.113.17"
+            "-l",
+            "deploy",
+            "203.0.113.17"
         ]
+    );
+}
+
+/// An explicit value that looks like an OpenSSH flag must remain the value of
+/// `-l`; it must never be placed in an option slot.
+#[tokio::test]
+async fn a_dash_prefixed_user_cannot_become_an_ssh_option() {
+    let mock = mock(Some("203.0.113.17"), "Oracle Linux").await;
+    let target = run(
+        &context(&mock),
+        "free-arm-1",
+        Some("-Fmalicious-config"),
+        None,
+        SshMode::Print,
+    )
+    .await
+    .expect("ssh target resolves");
+
+    assert_eq!(
+        target.command,
+        vec!["ssh", "-l", "-Fmalicious-config", "203.0.113.17"]
     );
 }
 
@@ -192,7 +229,8 @@ async fn a_closed_ssh_port_is_warned_about() {
     );
 }
 
-/// The central injection property: every value goes into its own argv slot.
+/// The central injection property: every untrusted value stays in its own argv
+/// slot, and the user name is consumed by `-l` rather than parsed as an option.
 #[tokio::test]
 async fn hostile_metacharacters_stay_inside_one_argument() {
     let mock = mock(Some("203.0.113.17"), "Oracle Linux").await;
@@ -208,24 +246,30 @@ async fn hostile_metacharacters_stay_inside_one_argument() {
 
     assert_eq!(
         target.command,
-        vec!["ssh", "evil; rm -rf /@203.0.113.17"],
-        "the whole user@host must be one argument"
+        vec!["ssh", "-l", "evil; rm -rf /", "203.0.113.17"],
+        "the login name must remain one argument consumed by -l"
     );
-    assert_eq!(
-        target.command.len(),
-        2,
-        "no metacharacter may split the command into more arguments"
-    );
+    assert_eq!(target.command.len(), 4);
 }
 
 /// The displayed command is quoted so that copy-pasting it is also safe.
 #[test]
 fn the_displayed_command_is_shell_quoted() {
-    let quoted = shell_quote(&["ssh".to_owned(), "evil; rm -rf /@203.0.113.17".to_owned()]);
-    assert_eq!(quoted, "ssh 'evil; rm -rf /@203.0.113.17'");
+    let quoted = shell_quote(&[
+        "ssh".to_owned(),
+        "-l".to_owned(),
+        "evil; rm -rf /".to_owned(),
+        "203.0.113.17".to_owned(),
+    ]);
+    assert_eq!(quoted, "ssh -l 'evil; rm -rf /' 203.0.113.17");
 
-    let plain = shell_quote(&["ssh".to_owned(), "opc@203.0.113.17".to_owned()]);
-    assert_eq!(plain, "ssh opc@203.0.113.17");
+    let plain = shell_quote(&[
+        "ssh".to_owned(),
+        "-l".to_owned(),
+        "opc".to_owned(),
+        "203.0.113.17".to_owned(),
+    ]);
+    assert_eq!(plain, "ssh -l opc 203.0.113.17");
 
     let apostrophe = shell_quote(&["it's".to_owned()]);
     assert!(apostrophe.starts_with('\'') && apostrophe.ends_with('\''));

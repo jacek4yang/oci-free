@@ -337,7 +337,7 @@ async fn open_modifies_only_the_instance_nsg() {
     let write = &writes[0];
     assert!(
         write.target().contains(&format!(
-            "/networkSecurityGroups/{MANAGED_NSG_ID}/securityRules/actions/addSecurityRules"
+            "/networkSecurityGroups/{MANAGED_NSG_ID}/actions/addSecurityRules"
         )),
         "unexpected target {}",
         write.target()
@@ -805,16 +805,14 @@ fn a_bare_address_becomes_a_host_route() {
 }
 
 #[test]
-fn retry_tokens_are_stable_per_operation_and_distinct_across_them() {
-    assert_eq!(
-        retry_token("nsg", INSTANCE_ID),
-        retry_token("nsg", INSTANCE_ID)
-    );
-    assert_ne!(
-        retry_token("nsg", INSTANCE_ID),
-        retry_token("vcn", INSTANCE_ID)
-    );
-    assert_ne!(retry_token("nsg", INSTANCE_ID), retry_token("nsg", "other"));
+fn retry_tokens_are_fresh_across_logical_create_attempts() {
+    let first = retry_token("nsg", INSTANCE_ID);
+    let second = retry_token("nsg", INSTANCE_ID);
+    assert_ne!(first, second);
+    assert!(first.starts_with("oci-free-nsg-"));
+    assert!(second.starts_with("oci-free-nsg-"));
+    assert!(first.len() <= 64);
+    assert!(second.len() <= 64);
 }
 
 #[test]
@@ -896,7 +894,7 @@ async fn an_nsg_created_but_not_attached_is_reported_as_a_partial_mutation() {
     assert_eq!(error.exit_code_kind().code(), 7);
     assert!(error.context().expect("context").contains(MANAGED_NSG_ID));
     assert!(
-        error.remediation().contains("idempotency token"),
+        error.remediation().contains("tagged group"),
         "the user must be told that re-running reuses the group"
     );
     assert!(

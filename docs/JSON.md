@@ -20,7 +20,7 @@ Every response, success or failure, is wrapped the same way.
 | Field | Type | Notes |
 | --- | --- | --- |
 | `schema_version` | string | Currently `"1"`. Bumped only for a breaking change. |
-| `command` | string | Dotted command identifier, for example `vm.net.open`. |
+| `command` | string | Dotted command identifier, for example `vm.net.open`; the top-level cleanup command is `reset`. |
 | `data` | object | Present on success. Absent on failure. |
 | `error` | object | Present on failure. Absent on success. |
 | `warnings` | array of strings | **Always present**, possibly empty, so consumers can iterate without a null check. |
@@ -96,7 +96,8 @@ These map onto exit codes as documented in
 Both because a machine-readable command must be safe in a pipeline:
 
 - prompting is disabled, so a missing required value is an error naming the
-  flag rather than a hang;
+  flag rather than a hang; destructive `reset` therefore requires `--yes` in
+  JSON/automation mode;
 - `vm ssh` prints the command instead of launching an interactive session.
 
 ## Payloads by command
@@ -137,6 +138,21 @@ Check `id` values are stable identifiers: `configuration`,
 `live_authentication`, `live_tenancy`, `live_home_region`,
 `live_availability_domains`, `live_compute_read`, `live_network_read`,
 `live_limits_read`, `live_usage_read`.
+
+### `reset`
+
+`region`, `deleted`, `retained`, `resources`, `warnings`.
+
+Each `resources` entry contains `kind`, `id`, optional `name`, `outcome`, and
+`reason`. `outcome` is `deleted` or `retained`. The inventory is ownership
+filtered before the destructive plan is approved: untagged and reused resources
+do not appear as deletion targets merely because their names resemble oci-free
+resources.
+
+A result with `retained > 0` is still emitted as a success envelope containing
+the cleanup report, but the process exits with the documented partial exit code
+7. Scripts must check the exit status or `retained`; do not interpret the
+presence of `data` as proof that every asynchronous OCI deletion settled.
 
 ### `account.info`
 
@@ -204,16 +220,21 @@ the one place a `null` is deliberate: absence is the answer, not a gap.
 ### `vm.ssh`
 
 `instance`, `instance_id`, `region`, `host`, `user`, `identity_file`,
-`command` (the argv array), `launched`, `exit_code`, `warnings`.
+`command` (the exact argv array, using OpenSSH `-l USER HOST` rather than a
+shell command), `launched`, `exit_code`, `warnings`.
 
 Under `--json`, `launched` is always `false`.
 
 ### `vm.create`
 
 `instance`, `instance_id`, `region`, `availability_domain`, `shape`, `ocpus`,
-`memory_gb`, `image_id`, `image_name`, `lifecycle_state`, `public_ip`,
-`private_ip`, `nsg_id`, `nsg_verified`, `ssh_reachable`, `ssh_command`,
-`created`, `warnings`.
+`memory_gb`, `image_id`, `image_name`, `lifecycle_state`, `ssh_user`,
+`hostname`, `public_ip`, `private_ip`, `nsg_id`, `nsg_verified`,
+`ssh_reachable`, `ssh_command`, `created`, `warnings`.
+
+`hostname` is omitted when no custom hostname was requested. `ssh_user` is the
+custom cloud-init user when `--username` was supplied, otherwise the image login
+name selected by oci-free.
 
 `created` records every OCI object this operation made (`vcn_id`, `subnet_id`,
 `internet_gateway_id`, `nsg_id`, `instance_id`), so a script can clean up after

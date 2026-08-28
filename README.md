@@ -2,10 +2,12 @@
 
 A smart, free-first, safety-focused command-line manager for Oracle Cloud Infrastructure Free Tier accounts.
 
-> Status: the v1 command surface is implemented and covered by tests. It has
-> not yet been validated against a live OCI tenancy — see
-> [`docs/LIVE-VALIDATION.md`](docs/LIVE-VALIDATION.md) for the checklist that
-> closes that gap, and [Current capability](#current-capability) below.
+> Status: the v1 command surface is implemented and covered by tests. Live
+> validation is in progress: signed authentication, core read paths, service
+> limits, usage/cost, VM launch, public networking, SSH key injection, and SSH
+> login have been exercised against a real Free Tier tenancy. The remaining
+> mutation checklist must still be completed before the stable `v1.0.0` tag —
+> see [`docs/LIVE-VALIDATION.md`](docs/LIVE-VALIDATION.md).
 
 ## Goals
 
@@ -29,6 +31,7 @@ $ oci-free status
 $ oci-free doctor
 $ oci-free free list
 $ oci-free vm create
+$ oci-free vm create --name oracle-01 --username deploy --hostname oracle-01 --ssh-key ~/.ssh/id_ed25519.pub
 $ oci-free vm list
 $ oci-free vm info oracle-01
 $ oci-free vm ssh oracle-01
@@ -36,9 +39,12 @@ $ oci-free vm net oracle-01 show
 $ oci-free vm net oracle-01 open 443/tcp
 $ oci-free vm net oracle-01 audit
 $ oci-free cost
+$ oci-free reset
 ```
 
 Interactive commands should guide the user through safe choices. Non-interactive flags should remain available for automation.
+
+`oci-free reset` is a test-workflow cleanup command, not an unrestricted tenancy wipe. It prints a destructive plan and deletes only resources whose OCI tags prove that oci-free created them. Untagged resources, reused resources, and user-owned lookalikes are retained. Use `--yes` only after reviewing the same ownership model in automation.
 
 ## Getting started
 
@@ -89,22 +95,25 @@ never a success-shaped result.
 | `oci-free free list` | Allowances, live `billingType`, current usage, remaining capacity, blockers. |
 | `oci-free policy explain` | The whole evidence chain behind an allow or block. |
 | `oci-free vm list` / `info` / `ip` | Instances, one instance in full, and addresses. |
-| `oci-free vm create` | Discovery, capacity check, plan, confirmation, launch, then NSG and exposure verification. |
+| `oci-free vm create` | Discovery, capacity check, plan, confirmation, launch, then NSG and exposure verification; supports `--username` and `--hostname`. |
 | `oci-free vm delete` | Ownership-proven cleanup with an explicit boot-volume choice. |
 | `oci-free vm start` / `stop` / `reboot` | Lifecycle, with the current state validated first. |
-| `oci-free vm ssh` | Connect using discovered details, via argv rather than a shell string. |
+| `oci-free vm ssh` | Connect using discovered details; remembers an oci-free-created custom login user and invokes OpenSSH via argv rather than a shell string. |
 | `oci-free vm net show` / `audit` | Effective exposure with provenance, and explainable findings. |
 | `oci-free vm net open` / `close` | Instance-scoped ingress, verified against a fresh read afterwards. |
+| `oci-free reset` | Delete the home-region resources that ownership tags prove were created by oci-free, after one complete preflight plan; report partial cleanup if dependencies remain. |
 
 What is **not** here, deliberately: API key generation (the OCI Console does it
 in one step with no local toolchain), subnet-wide Security List edits (they
 affect every instance in the subnet, so they belong in the Console), and any
 form of activity generation to defeat idle reclamation.
 
-Live validation is in progress. Signed authentication and the core read-only
-services have been exercised against a real tenancy; the first run found a
-Limits/Usage endpoint defect. Re-validation of those corrected requests and the
-remaining mutation checklist are still required. See
+Live validation is in progress. Real-tenancy testing has confirmed OCI request
+signing, identity and account reads, limits, usage/cost, compute/network reads,
+VM launch, public addressing, SSH key injection, and SSH login. That testing
+also exposed service-endpoint and NSG action-path defects that were fixed from
+wire evidence. The remaining mutation and cleanup scenarios still have to pass
+the checklist before a stable release. See
 [`docs/LIVE-VALIDATION.md`](docs/LIVE-VALIDATION.md).
 
 ## Documentation
@@ -173,10 +182,11 @@ permitted; `Unknown` blocks, which is the entire point.
 
 Three properties are enforced structurally rather than by convention:
 
-- **A write cannot bypass its plan.** Every write helper takes an `Approval`,
-  and only `MutationPlan::approve` can mint one — it refuses on a blocker, on
-  any billing risk other than `none`, or without an explicit confirmation. A
-  write path that skipped the plan would not compile.
+- **Command-layer mutations cannot bypass their plan.** Mutation commands build
+  a `MutationPlan`, obtain an `Approval`, and pass that approval through the
+  command-layer write helpers. `MutationPlan::approve` refuses blockers,
+  non-zero billing risk, and missing confirmation. Low-level OCI adapters stay
+  transport-focused; they are not themselves the policy boundary.
 - **Ownership is proven from tags, never from a name.** Only a resource
   oci-free created may be deleted. A VCN called `oci-free-vcn` with no ownership
   tag belongs to somebody else and is left alone.

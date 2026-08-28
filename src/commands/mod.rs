@@ -10,6 +10,7 @@ pub mod free;
 pub mod myip;
 pub mod network_setup;
 pub mod policy;
+pub mod reset;
 pub mod ssh;
 pub mod status;
 pub mod vm;
