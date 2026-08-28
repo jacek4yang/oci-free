@@ -703,36 +703,34 @@ async fn await_subnet_available(context: &CommandContext, subnet_id: &str) -> Re
     let api = NetworkApi::new(context.client());
     let poll = context.poll();
     let deadline = std::time::Instant::now() + poll.timeout;
-    let mut last_state = "not yet read".to_owned();
 
     loop {
-        match api.get_subnet(subnet_id).await {
+        let state = match api.get_subnet(subnet_id).await {
             Ok(subnet) => {
-                last_state = subnet
+                let state = subnet
                     .lifecycle_state
                     .unwrap_or_else(|| "UNKNOWN".to_owned());
-                if last_state.eq_ignore_ascii_case("AVAILABLE") {
+                if state.eq_ignore_ascii_case("AVAILABLE") {
                     return Ok(());
                 }
-                if matches!(last_state.as_str(), "TERMINATING" | "TERMINATED") {
+                if matches!(state.as_str(), "TERMINATING" | "TERMINATED") {
                     return Err(Error::malformed_response(format!(
-                        "the managed subnet reached {last_state} before the instance could be launched"
+                        "the managed subnet reached {state} before the instance could be launched"
                     ))
                     .with_context(format!("subnet {subnet_id}"))
                     .with_remediation("run `oci-free vm create` again after checking the managed network"));
                 }
+                state
             }
-            Err(error) if error.kind() == ErrorKind::NotFound => {
-                last_state = "not yet visible".to_owned();
-            }
+            Err(error) if error.kind() == ErrorKind::NotFound => "not yet visible".to_owned(),
             Err(error) => return Err(error),
-        }
+        };
 
         if std::time::Instant::now() >= deadline {
             return Err(Error::timeout(
                 "the managed subnet did not become AVAILABLE before the network readiness deadline",
             )
-            .with_context(format!("subnet {subnet_id} was {last_state}"))
+            .with_context(format!("subnet {subnet_id} was {state}"))
             .with_remediation(
                 "wait for OCI networking to finish provisioning, then retry `oci-free vm create`",
             ));
@@ -753,44 +751,34 @@ async fn await_nsg_available(context: &CommandContext, nsg: &NetworkSecurityGrou
     let api = NetworkApi::new(context.client());
     let poll = context.poll();
     let deadline = std::time::Instant::now() + poll.timeout;
-    let mut last_state = nsg
-        .lifecycle_state
-        .clone()
-        .unwrap_or_else(|| "UNKNOWN".to_owned());
 
     loop {
-        match api.get_nsg(&nsg.id).await {
+        let state = match api.get_nsg(&nsg.id).await {
             Ok(current) => {
-                last_state = current
+                let state = current
                     .lifecycle_state
                     .unwrap_or_else(|| "UNKNOWN".to_owned());
-                if last_state.eq_ignore_ascii_case("AVAILABLE") {
+                if state.eq_ignore_ascii_case("AVAILABLE") {
                     return Ok(());
                 }
-                if matches!(last_state.as_str(), "TERMINATING" | "TERMINATED") {
+                if matches!(state.as_str(), "TERMINATING" | "TERMINATED") {
                     return Err(Error::malformed_response(format!(
-                        "the network security group reached {last_state} before its rules could be configured"
+                        "the network security group reached {state} before its rules could be configured"
                     ))
                     .with_context(format!("network security group {}", nsg.id))
                     .with_remediation("retry `oci-free vm create`; the failed operation will only reuse resources it can prove it owns"));
                 }
+                state
             }
-            Err(error) if error.kind() == ErrorKind::NotFound => {
-                // A freshly-created NSG can briefly be absent from read-after-write
-                // replicas. Treat that as provisioning, not as an IAM failure.
-                last_state = "not yet visible".to_owned();
-            }
+            Err(error) if error.kind() == ErrorKind::NotFound => "not yet visible".to_owned(),
             Err(error) => return Err(error),
-        }
+        };
 
         if std::time::Instant::now() >= deadline {
             return Err(Error::timeout(
                 "the network security group did not become AVAILABLE before the readiness deadline",
             )
-            .with_context(format!(
-                "network security group {} was {last_state}",
-                nsg.id
-            ))
+            .with_context(format!("network security group {} was {state}", nsg.id))
             .with_remediation(
                 "wait for OCI networking to finish provisioning, then retry `oci-free vm create`",
             ));
