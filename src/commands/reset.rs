@@ -266,8 +266,16 @@ async fn apply(
                 }
             }
             Err(error) => {
-                warnings.push(format!("instance {} could not be terminated: {error}", instance.id));
-                resources.push(failed("compute instance", &instance.id, instance.display_name.clone(), &error));
+                warnings.push(format!(
+                    "instance {} could not be terminated: {error}",
+                    instance.id
+                ));
+                resources.push(failed(
+                    "compute instance",
+                    &instance.id,
+                    instance.display_name.clone(),
+                    &error,
+                ));
             }
         }
     }
@@ -275,7 +283,9 @@ async fn apply(
     // A retained boot volume from an earlier failed/manual test can outlive its
     // instance. Delete only volumes carrying oci-free's Created ownership tag.
     if let Err(error) = delete_managed_boot_volumes(context, &mut resources, &mut warnings).await {
-        warnings.push(format!("managed boot-volume discovery was incomplete: {error}"));
+        warnings.push(format!(
+            "managed boot-volume discovery was incomplete: {error}"
+        ));
     }
 
     for nsg in &inventory.nsgs {
@@ -287,18 +297,38 @@ async fn apply(
                 nsg.display_name.clone(),
             )),
             Err(error) => {
-                warnings.push(format!("network security group {} could not be deleted: {error}", nsg.id));
-                resources.push(failed("network security group", &nsg.id, nsg.display_name.clone(), &error));
+                warnings.push(format!(
+                    "network security group {} could not be deleted: {error}",
+                    nsg.id
+                ));
+                resources.push(failed(
+                    "network security group",
+                    &nsg.id,
+                    nsg.display_name.clone(),
+                    &error,
+                ));
             }
         }
     }
 
     for subnet in &inventory.subnets {
         match delete_subnet_until_gone(context, &network, &subnet.id).await {
-            Ok(()) => resources.push(deleted_outcome("subnet", &subnet.id, subnet.display_name.clone())),
+            Ok(()) => resources.push(deleted_outcome(
+                "subnet",
+                &subnet.id,
+                subnet.display_name.clone(),
+            )),
             Err(error) => {
-                warnings.push(format!("subnet {} could not be deleted: {error}", subnet.id));
-                resources.push(failed("subnet", &subnet.id, subnet.display_name.clone(), &error));
+                warnings.push(format!(
+                    "subnet {} could not be deleted: {error}",
+                    subnet.id
+                ));
+                resources.push(failed(
+                    "subnet",
+                    &subnet.id,
+                    subnet.display_name.clone(),
+                    &error,
+                ));
             }
         }
     }
@@ -312,8 +342,16 @@ async fn apply(
                 gateway.display_name.clone(),
             )),
             Err(error) => {
-                warnings.push(format!("internet gateway {} could not be deleted: {error}", gateway.id));
-                resources.push(failed("internet gateway", &gateway.id, gateway.display_name.clone(), &error));
+                warnings.push(format!(
+                    "internet gateway {} could not be deleted: {error}",
+                    gateway.id
+                ));
+                resources.push(failed(
+                    "internet gateway",
+                    &gateway.id,
+                    gateway.display_name.clone(),
+                    &error,
+                ));
             }
         }
     }
@@ -345,7 +383,9 @@ async fn wait_instance_gone(context: &CommandContext, instance: &Instance) -> bo
     let deadline = std::time::Instant::now() + poll.timeout;
     loop {
         match compute.get_instance(&instance.id).await {
-            Ok(current) if current.lifecycle_state.eq_ignore_ascii_case("TERMINATED") => return true,
+            Ok(current) if current.lifecycle_state.eq_ignore_ascii_case("TERMINATED") => {
+                return true;
+            }
             Err(error) if error.kind() == ErrorKind::NotFound => return true,
             Ok(_) => {}
             Err(_) => return false,
@@ -364,7 +404,10 @@ async fn delete_managed_boot_volumes(
 ) -> Result<()> {
     let identity = IdentityApi::new(context.client());
     let block = BlockStorageApi::new(context.client());
-    for domain in identity.list_availability_domains(context.tenancy()).await? {
+    for domain in identity
+        .list_availability_domains(context.tenancy())
+        .await?
+    {
         for volume in block
             .list_boot_volumes(context.tenancy(), &domain.name)
             .await?
@@ -378,8 +421,16 @@ async fn delete_managed_boot_volumes(
                     volume.display_name.clone(),
                 )),
                 Err(error) => {
-                    warnings.push(format!("boot volume {} could not be deleted: {error}", volume.id));
-                    resources.push(failed("boot volume", &volume.id, volume.display_name.clone(), &error));
+                    warnings.push(format!(
+                        "boot volume {} could not be deleted: {error}",
+                        volume.id
+                    ));
+                    resources.push(failed(
+                        "boot volume",
+                        &volume.id,
+                        volume.display_name.clone(),
+                        &error,
+                    ));
                 }
             }
         }
@@ -443,7 +494,9 @@ async fn delete_gateway_until_gone(
         match api.delete_internet_gateway(gateway_id).await {
             Ok(()) => return Ok(()),
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
-            Err(error) if error.kind() == ErrorKind::Conflict && !detached && !vcn_id.is_empty() => {
+            Err(error)
+                if error.kind() == ErrorKind::Conflict && !detached && !vcn_id.is_empty() =>
+            {
                 network_setup::detach_gateway_routes(context, vcn_id, gateway_id).await?;
                 detached = true;
             }
@@ -477,7 +530,10 @@ where
 fn retryable_delete(error: &Error) -> bool {
     matches!(
         error.kind(),
-        ErrorKind::Conflict | ErrorKind::InvalidInput | ErrorKind::TransientServer | ErrorKind::RateLimited
+        ErrorKind::Conflict
+            | ErrorKind::InvalidInput
+            | ErrorKind::TransientServer
+            | ErrorKind::RateLimited
     )
 }
 

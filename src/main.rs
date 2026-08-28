@@ -71,7 +71,8 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
         }
         Command::Reset { yes } => {
             let context = context(cli)?;
-            let (_, result) = reset::run(&context, reset::ResetRequest { assume_yes: *yes }).await?;
+            let (_, result) =
+                reset::run(&context, reset::ResetRequest { assume_yes: *yes }).await?;
             emit(cli, "reset", &result, reset::render_human(&result))?;
             Ok(if result.retained == 0 {
                 success
@@ -89,13 +90,23 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             AccountCommand::Limits { all } => {
                 let context = context(cli)?;
                 let report = account::limits(&context, *all).await?;
-                emit(cli, "account.limits", &report, account::render_limits(&report))?;
+                emit(
+                    cli,
+                    "account.limits",
+                    &report,
+                    account::render_limits(&report),
+                )?;
                 Ok(success)
             }
             AccountCommand::Usage => {
                 let context = context(cli)?;
                 let report = account::usage(&context).await?;
-                emit(cli, "account.usage", &report, account::render_usage(&report))?;
+                emit(
+                    cli,
+                    "account.usage",
+                    &report,
+                    account::render_usage(&report),
+                )?;
                 Ok(success)
             }
         },
@@ -118,7 +129,12 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             let projection = policy::parse_projection(*ocpus, *memory)?;
             let context = context(cli)?;
             let explanation = policy::explain(&context, resource, projection).await?;
-            emit(cli, "policy.explain", &explanation, policy::render_human(&explanation))?;
+            emit(
+                cli,
+                "policy.explain",
+                &explanation,
+                policy::render_human(&explanation),
+            )?;
             Ok(success)
         }
         Command::Config { command } => match command {
@@ -141,12 +157,23 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
                     return Err(key_generation_unsupported());
                 }
                 let result = config_init::init(&env, &request).await?;
-                emit(cli, "config.init", &result, config_init::render_init(&result))?;
+                emit(
+                    cli,
+                    "config.init",
+                    &result,
+                    config_init::render_init(&result),
+                )?;
                 Ok(success)
             }
             ConfigCommand::Show => {
-                let config = config_init::show(&Environment::from_process(), &cli.config_options())?;
-                emit(cli, "config.show", &config, config_init::render_show(&config))?;
+                let config =
+                    config_init::show(&Environment::from_process(), &cli.config_options())?;
+                emit(
+                    cli,
+                    "config.show",
+                    &config,
+                    config_init::render_show(&config),
+                )?;
                 Ok(success)
             }
         },
@@ -188,7 +215,8 @@ async fn run_vm(cli: &Cli, command: &VmCommand) -> Result<ExitCode> {
             } else {
                 ssh::SshMode::Connect
             };
-            let target = ssh::run(&context, instance, user.as_deref(), identity.as_ref(), mode).await?;
+            let target =
+                ssh::run(&context, instance, user.as_deref(), identity.as_ref(), mode).await?;
             emit(cli, "vm.ssh", &target, ssh::render_human(&target))?;
             Ok(match target.exit_code {
                 Some(code) if code != 0 => {
@@ -236,14 +264,24 @@ async fn run_vm(cli: &Cli, command: &VmCommand) -> Result<ExitCode> {
             Ok(success)
         }
         VmCommand::Start { instance, yes } => {
-            lifecycle(cli, instance, oci_free::oci::compute::InstanceAction::Start, *yes).await
+            lifecycle(
+                cli,
+                instance,
+                oci_free::oci::compute::InstanceAction::Start,
+                *yes,
+            )
+            .await
         }
-        VmCommand::Stop { instance, force, yes } => {
-            lifecycle(cli, instance, vmlifecycle::stop_action(*force), *yes).await
-        }
-        VmCommand::Reboot { instance, force, yes } => {
-            lifecycle(cli, instance, vmlifecycle::reboot_action(*force), *yes).await
-        }
+        VmCommand::Stop {
+            instance,
+            force,
+            yes,
+        } => lifecycle(cli, instance, vmlifecycle::stop_action(*force), *yes).await,
+        VmCommand::Reboot {
+            instance,
+            force,
+            yes,
+        } => lifecycle(cli, instance, vmlifecycle::reboot_action(*force), *yes).await,
         VmCommand::Net { instance, command } => run_vm_net(cli, instance, command).await,
     }
 }
@@ -251,7 +289,9 @@ async fn run_vm(cli: &Cli, command: &VmCommand) -> Result<ExitCode> {
 async fn run_vm_net(cli: &Cli, instance: &str, command: &VmNetCommand) -> Result<ExitCode> {
     let success = ExitCodeKind::Success.exit_code();
     let rule = match command {
-        VmNetCommand::Open { rule, .. } | VmNetCommand::Close { rule, .. } => Some(parse_rule(rule)?),
+        VmNetCommand::Open { rule, .. } | VmNetCommand::Close { rule, .. } => {
+            Some(parse_rule(rule)?)
+        }
         VmNetCommand::Show | VmNetCommand::Audit => None,
     };
     let context = context(cli)?;
@@ -272,7 +312,8 @@ async fn run_vm_net(cli: &Cli, instance: &str, command: &VmNetCommand) -> Result
         }
         VmNetCommand::Open { source, yes, .. } => {
             let rule = rule.expect("the rule was parsed above");
-            let (_, change) = vmnet::open(&context, instance, rule, source.as_deref(), *yes).await?;
+            let (_, change) =
+                vmnet::open(&context, instance, rule, source.as_deref(), *yes).await?;
             emit(cli, "vm.net.open", &change, vmnet::render_change(&change))?;
             Ok(success)
         }
@@ -309,20 +350,31 @@ fn parse_rule(rule: &str) -> Result<PortRule> {
 
 fn context(cli: &Cli) -> Result<CommandContext> {
     let context = CommandContext::load(&Environment::from_process(), &cli.config_options())?;
-    Ok(if cli.json { context.non_interactive() } else { context })
+    Ok(if cli.json {
+        context.non_interactive()
+    } else {
+        context
+    })
 }
 
 fn create_context(cli: &Cli, args: &CreateArgs) -> Result<CommandContext> {
     let context = context(cli)?;
-    Ok(if args.non_interactive { context.non_interactive() } else { context })
+    Ok(if args.non_interactive {
+        context.non_interactive()
+    } else {
+        context
+    })
 }
 
 fn emit<T: Serialize>(cli: &Cli, command: &str, data: &T, human: String) -> Result<()> {
     if cli.json {
         let envelope = Envelope::success(command, data);
         let rendered = envelope.render().map_err(|error| {
-            Error::new(ErrorKind::MalformedResponse, "could not serialize the response")
-                .with_context(error.to_string())
+            Error::new(
+                ErrorKind::MalformedResponse,
+                "could not serialize the response",
+            )
+            .with_context(error.to_string())
         })?;
         println!("{rendered}");
     } else {
@@ -334,10 +386,14 @@ fn emit<T: Serialize>(cli: &Cli, command: &str, data: &T, human: String) -> Resu
 async fn run_doctor(cli: &Cli) -> Result<ExitCode> {
     let report = doctor::run_with_live(&Environment::from_process(), &cli.config_options()).await;
     if cli.json {
-        let envelope = Envelope::success("doctor", &report).with_warnings(doctor::advisories(&report));
+        let envelope =
+            Envelope::success("doctor", &report).with_warnings(doctor::advisories(&report));
         let rendered = envelope.render().map_err(|error| {
-            Error::new(ErrorKind::MalformedResponse, "could not serialize the report")
-                .with_context(error.to_string())
+            Error::new(
+                ErrorKind::MalformedResponse,
+                "could not serialize the report",
+            )
+            .with_context(error.to_string())
         })?;
         println!("{rendered}");
     } else {

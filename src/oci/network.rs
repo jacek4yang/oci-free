@@ -442,37 +442,65 @@ impl<'a> NetworkApi<'a> {
 
     pub async fn get_vnic(&self, vnic_id: &str) -> Result<Vnic> {
         let path = format!("/vnics/{}", encode_path_segment(vnic_id));
-        Ok(self.client.get_json::<Vnic>(Service::Core, &path, "GetVnic").await?.body)
+        Ok(self
+            .client
+            .get_json::<Vnic>(Service::Core, &path, "GetVnic")
+            .await?
+            .body)
     }
 
     pub async fn get_subnet(&self, subnet_id: &str) -> Result<Subnet> {
         let path = format!("/subnets/{}", encode_path_segment(subnet_id));
-        Ok(self.client.get_json::<Subnet>(Service::Core, &path, "GetSubnet").await?.body)
+        Ok(self
+            .client
+            .get_json::<Subnet>(Service::Core, &path, "GetSubnet")
+            .await?
+            .body)
     }
 
     pub async fn get_vcn(&self, vcn_id: &str) -> Result<Vcn> {
         let path = format!("/vcns/{}", encode_path_segment(vcn_id));
-        Ok(self.client.get_json::<Vcn>(Service::Core, &path, "GetVcn").await?.body)
+        Ok(self
+            .client
+            .get_json::<Vcn>(Service::Core, &path, "GetVcn")
+            .await?
+            .body)
     }
 
     pub async fn get_nsg(&self, nsg_id: &str) -> Result<NetworkSecurityGroup> {
         let path = format!("/networkSecurityGroups/{}", encode_path_segment(nsg_id));
-        Ok(self.client.get_json::<NetworkSecurityGroup>(Service::Core, &path, "GetNetworkSecurityGroup").await?.body)
+        Ok(self
+            .client
+            .get_json::<NetworkSecurityGroup>(Service::Core, &path, "GetNetworkSecurityGroup")
+            .await?
+            .body)
     }
 
     pub async fn get_security_list(&self, id: &str) -> Result<SecurityList> {
         let path = format!("/securityLists/{}", encode_path_segment(id));
-        Ok(self.client.get_json::<SecurityList>(Service::Core, &path, "GetSecurityList").await?.body)
+        Ok(self
+            .client
+            .get_json::<SecurityList>(Service::Core, &path, "GetSecurityList")
+            .await?
+            .body)
     }
 
     pub async fn get_route_table(&self, id: &str) -> Result<RouteTable> {
         let path = format!("/routeTables/{}", encode_path_segment(id));
-        Ok(self.client.get_json::<RouteTable>(Service::Core, &path, "GetRouteTable").await?.body)
+        Ok(self
+            .client
+            .get_json::<RouteTable>(Service::Core, &path, "GetRouteTable")
+            .await?
+            .body)
     }
 
     pub async fn get_internet_gateway(&self, id: &str) -> Result<InternetGateway> {
         let path = format!("/internetGateways/{}", encode_path_segment(id));
-        Ok(self.client.get_json::<InternetGateway>(Service::Core, &path, "GetInternetGateway").await?.body)
+        Ok(self
+            .client
+            .get_json::<InternetGateway>(Service::Core, &path, "GetInternetGateway")
+            .await?
+            .body)
     }
 
     pub async fn list_nsg_ingress_rules(&self, nsg_id: &str) -> Result<Vec<SecurityRule>> {
@@ -480,7 +508,13 @@ impl<'a> NetworkApi<'a> {
             "/networkSecurityGroups/{}/securityRules?direction=INGRESS",
             encode_path_segment(nsg_id)
         );
-        self.client.list_all(Service::Core, &path, "ListNetworkSecurityGroupSecurityRules").await
+        self.client
+            .list_all(
+                Service::Core,
+                &path,
+                "ListNetworkSecurityGroupSecurityRules",
+            )
+            .await
     }
 
     pub async fn list_nsg_rules(&self, nsg_id: &str) -> Result<Vec<SecurityRule>> {
@@ -488,33 +522,71 @@ impl<'a> NetworkApi<'a> {
             "/networkSecurityGroups/{}/securityRules",
             encode_path_segment(nsg_id)
         );
-        self.client.list_all(Service::Core, &path, "ListNetworkSecurityGroupSecurityRules").await
+        self.client
+            .list_all(
+                Service::Core,
+                &path,
+                "ListNetworkSecurityGroupSecurityRules",
+            )
+            .await
     }
 
-    pub async fn list_nsgs(&self, compartment: &Ocid, vcn_id: Option<&str>) -> Result<Vec<NetworkSecurityGroup>> {
-        let mut path = format!("/networkSecurityGroups?compartmentId={}", encode_query_value(compartment.as_str()));
+    pub async fn list_nsgs(
+        &self,
+        compartment: &Ocid,
+        vcn_id: Option<&str>,
+    ) -> Result<Vec<NetworkSecurityGroup>> {
+        let mut path = format!(
+            "/networkSecurityGroups?compartmentId={}",
+            encode_query_value(compartment.as_str())
+        );
         if let Some(vcn) = vcn_id {
             path.push_str(&format!("&vcnId={}", encode_query_value(vcn)));
         }
-        self.client.list_all(Service::Core, &path, "ListNetworkSecurityGroups").await
+        self.client
+            .list_all(Service::Core, &path, "ListNetworkSecurityGroups")
+            .await
     }
 
     pub async fn list_vcns(&self, compartment: &Ocid) -> Result<Vec<Vcn>> {
-        let path = format!("/vcns?compartmentId={}", encode_query_value(compartment.as_str()));
+        let path = format!(
+            "/vcns?compartmentId={}",
+            encode_query_value(compartment.as_str())
+        );
         self.client.list_all(Service::Core, &path, "ListVcns").await
     }
 
     pub async fn list_subnets(&self, compartment: &Ocid, vcn_id: &str) -> Result<Vec<Subnet>> {
-        let path = format!("/subnets?compartmentId={}&vcnId={}", encode_query_value(compartment.as_str()), encode_query_value(vcn_id));
-        self.client.list_all(Service::Core, &path, "ListSubnets").await
+        let path = format!(
+            "/subnets?compartmentId={}&vcnId={}",
+            encode_query_value(compartment.as_str()),
+            encode_query_value(vcn_id)
+        );
+        self.client
+            .list_all(Service::Core, &path, "ListSubnets")
+            .await
     }
 
-    pub async fn list_internet_gateways(&self, compartment: &Ocid, vcn_id: &str) -> Result<Vec<InternetGateway>> {
-        let path = format!("/internetGateways?compartmentId={}&vcnId={}", encode_query_value(compartment.as_str()), encode_query_value(vcn_id));
-        self.client.list_all(Service::Core, &path, "ListInternetGateways").await
+    pub async fn list_internet_gateways(
+        &self,
+        compartment: &Ocid,
+        vcn_id: &str,
+    ) -> Result<Vec<InternetGateway>> {
+        let path = format!(
+            "/internetGateways?compartmentId={}&vcnId={}",
+            encode_query_value(compartment.as_str()),
+            encode_query_value(vcn_id)
+        );
+        self.client
+            .list_all(Service::Core, &path, "ListInternetGateways")
+            .await
     }
 
-    pub async fn add_nsg_rules(&self, nsg_id: &str, rules: Vec<AddSecurityRule>) -> Result<Option<String>> {
+    pub async fn add_nsg_rules(
+        &self,
+        nsg_id: &str,
+        rules: Vec<AddSecurityRule>,
+    ) -> Result<Option<String>> {
         let path = format!(
             "/networkSecurityGroups/{}/actions/addSecurityRules",
             encode_path_segment(nsg_id)
@@ -523,7 +595,9 @@ impl<'a> NetworkApi<'a> {
             .post_action(
                 Service::Core,
                 &path,
-                &AddSecurityRules { security_rules: rules },
+                &AddSecurityRules {
+                    security_rules: rules,
+                },
                 None,
                 "AddNetworkSecurityGroupSecurityRules",
             )
@@ -539,7 +613,9 @@ impl<'a> NetworkApi<'a> {
             .post_action(
                 Service::Core,
                 &path,
-                &RemoveSecurityRules { security_rule_ids: rule_ids },
+                &RemoveSecurityRules {
+                    security_rule_ids: rule_ids,
+                },
                 None,
                 "RemoveNetworkSecurityGroupSecurityRules",
             )
@@ -547,35 +623,97 @@ impl<'a> NetworkApi<'a> {
         Ok(())
     }
 
-    pub async fn create_nsg(&self, details: &CreateNsg, retry_token: &str) -> Result<NetworkSecurityGroup> {
-        Ok(self.client.post_json::<_, NetworkSecurityGroup>(Service::Core, "/networkSecurityGroups", details, Some(retry_token), "CreateNetworkSecurityGroup").await?.body)
+    pub async fn create_nsg(
+        &self,
+        details: &CreateNsg,
+        retry_token: &str,
+    ) -> Result<NetworkSecurityGroup> {
+        Ok(self
+            .client
+            .post_json::<_, NetworkSecurityGroup>(
+                Service::Core,
+                "/networkSecurityGroups",
+                details,
+                Some(retry_token),
+                "CreateNetworkSecurityGroup",
+            )
+            .await?
+            .body)
     }
 
     pub async fn delete_nsg(&self, nsg_id: &str) -> Result<()> {
         let path = format!("/networkSecurityGroups/{}", encode_path_segment(nsg_id));
-        self.client.delete(Service::Core, &path, "DeleteNetworkSecurityGroup").await
+        self.client
+            .delete(Service::Core, &path, "DeleteNetworkSecurityGroup")
+            .await
     }
 
     pub async fn create_vcn(&self, details: &CreateVcn, retry_token: &str) -> Result<Vcn> {
-        Ok(self.client.post_json::<_, Vcn>(Service::Core, "/vcns", details, Some(retry_token), "CreateVcn").await?.body)
+        Ok(self
+            .client
+            .post_json::<_, Vcn>(
+                Service::Core,
+                "/vcns",
+                details,
+                Some(retry_token),
+                "CreateVcn",
+            )
+            .await?
+            .body)
     }
 
     pub async fn create_subnet(&self, details: &CreateSubnet, retry_token: &str) -> Result<Subnet> {
-        Ok(self.client.post_json::<_, Subnet>(Service::Core, "/subnets", details, Some(retry_token), "CreateSubnet").await?.body)
+        Ok(self
+            .client
+            .post_json::<_, Subnet>(
+                Service::Core,
+                "/subnets",
+                details,
+                Some(retry_token),
+                "CreateSubnet",
+            )
+            .await?
+            .body)
     }
 
-    pub async fn create_internet_gateway(&self, details: &CreateInternetGateway, retry_token: &str) -> Result<InternetGateway> {
-        Ok(self.client.post_json::<_, InternetGateway>(Service::Core, "/internetGateways", details, Some(retry_token), "CreateInternetGateway").await?.body)
+    pub async fn create_internet_gateway(
+        &self,
+        details: &CreateInternetGateway,
+        retry_token: &str,
+    ) -> Result<InternetGateway> {
+        Ok(self
+            .client
+            .post_json::<_, InternetGateway>(
+                Service::Core,
+                "/internetGateways",
+                details,
+                Some(retry_token),
+                "CreateInternetGateway",
+            )
+            .await?
+            .body)
     }
 
-    pub async fn update_route_table(&self, route_table_id: &str, details: &UpdateRouteTable) -> Result<RouteTable> {
+    pub async fn update_route_table(
+        &self,
+        route_table_id: &str,
+        details: &UpdateRouteTable,
+    ) -> Result<RouteTable> {
         let path = format!("/routeTables/{}", encode_path_segment(route_table_id));
-        Ok(self.client.put_json::<_, RouteTable>(Service::Core, &path, details, "UpdateRouteTable").await?.body)
+        Ok(self
+            .client
+            .put_json::<_, RouteTable>(Service::Core, &path, details, "UpdateRouteTable")
+            .await?
+            .body)
     }
 
     pub async fn update_vnic_nsgs(&self, vnic_id: &str, nsg_ids: Vec<String>) -> Result<Vnic> {
         let path = format!("/vnics/{}", encode_path_segment(vnic_id));
-        Ok(self.client.put_json::<_, Vnic>(Service::Core, &path, &UpdateVnic { nsg_ids }, "UpdateVnic").await?.body)
+        Ok(self
+            .client
+            .put_json::<_, Vnic>(Service::Core, &path, &UpdateVnic { nsg_ids }, "UpdateVnic")
+            .await?
+            .body)
     }
 
     pub async fn delete_vcn(&self, vcn_id: &str) -> Result<()> {
@@ -585,12 +723,16 @@ impl<'a> NetworkApi<'a> {
 
     pub async fn delete_subnet(&self, subnet_id: &str) -> Result<()> {
         let path = format!("/subnets/{}", encode_path_segment(subnet_id));
-        self.client.delete(Service::Core, &path, "DeleteSubnet").await
+        self.client
+            .delete(Service::Core, &path, "DeleteSubnet")
+            .await
     }
 
     pub async fn delete_internet_gateway(&self, id: &str) -> Result<()> {
         let path = format!("/internetGateways/{}", encode_path_segment(id));
-        self.client.delete(Service::Core, &path, "DeleteInternetGateway").await
+        self.client
+            .delete(Service::Core, &path, "DeleteInternetGateway")
+            .await
     }
 }
 
