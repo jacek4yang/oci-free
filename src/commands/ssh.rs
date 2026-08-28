@@ -8,7 +8,9 @@
 //! The command line is built as an **argument vector and handed to the OS
 //! process API directly**. Nothing is ever concatenated into a shell string, so
 //! a display name, hostname, or user name containing shell metacharacters is
-//! passed through as one opaque argument and cannot become a command.
+//! passed through as one opaque argument and cannot become a command. The login
+//! name is supplied as the value of OpenSSH's `-l` option rather than placed in
+//! option position as part of `user@host`.
 //!
 //! In `--json` mode the process is not launched. A machine-readable command
 //! whose side effect is stealing the terminal would be unusable in a pipeline,
@@ -117,7 +119,12 @@ pub async fn run(
         command.push("-i".to_owned());
         command.push(identity.display().to_string());
     }
-    command.push(format!("{user}@{host}"));
+    // Keep the user name in a value slot even when an explicit --user or a
+    // manually edited OCI tag begins with `-`. The public address is a parsed IP,
+    // so it is safe as the final destination operand.
+    command.push("-l".to_owned());
+    command.push(user.clone());
+    command.push(host.clone());
 
     if let Some(exposure) = network.exposure()
         && !exposure.allows("22/tcp".parse().expect("a valid rule"))
@@ -155,8 +162,8 @@ async fn launch(mut target: SshTarget) -> Result<SshTarget> {
         .split_first()
         .expect("the command always starts with the program name");
 
-    // Arguments are passed as a vector: no shell is involved, so nothing in a
-    // host name or user name can be interpreted as a command.
+    // Arguments are passed as a vector: no shell is involved, and the login
+    // name occupies the argument consumed by `-l` rather than an option slot.
     let status = tokio::process::Command::new(program)
         .args(arguments)
         .status()
