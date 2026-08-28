@@ -88,10 +88,7 @@ async fn discovers_the_address_and_the_images_default_login_name() {
 
     assert_eq!(target.host, "203.0.113.17");
     assert_eq!(target.user, "opc");
-    assert_eq!(
-        target.command,
-        vec!["ssh", "-l", "opc", "203.0.113.17"]
-    );
+    assert_eq!(target.command, vec!["ssh", "-l", "opc", "203.0.113.17"]);
     assert!(!target.launched, "print mode must not launch anything");
 }
 
