@@ -1,9 +1,9 @@
 //! `oci-free reset` — return the resources created by oci-free to a clean slate.
 //!
-//! This is intentionally narrower than "delete everything in the tenancy".  It
+//! This is intentionally narrower than "delete everything in the tenancy". It
 //! deletes every resource that carries oci-free's `managed=created` ownership
 //! proof in the home region, and leaves untagged, user-owned, and reused
-//! resources untouched.  That makes it useful for repeated live validation
+//! resources untouched. That makes it useful for repeated live validation
 //! without turning a test helper into a tenancy-wide foot-gun.
 
 use serde::Serialize;
@@ -312,9 +312,11 @@ async fn apply(
         }
     }
 
-    // Boot volumes were inventoried before confirmation, so every destructive
-    // target is represented in the approved plan. A volume already removed by
-    // instance termination returns NotFound and is treated as clean.
+    // Every destructive target below was inventoried before confirmation. A
+    // successful DELETE is not enough to call a resource deleted: OCI cleanup
+    // is asynchronous, so each helper follows the accepted request with fresh
+    // GETs until the resource is actually gone (or a terminal deleted state is
+    // reported for boot storage).
     let block = BlockStorageApi::new(context.client());
     for volume in &inventory.boot_volumes {
         match delete_boot_until_gone(context, &block, &volume.id).await {
@@ -325,7 +327,7 @@ async fn apply(
             )),
             Err(error) => {
                 warnings.push(format!(
-                    "boot volume {} could not be deleted: {error}",
+                    "boot volume {} could not be verified deleted: {error}",
                     volume.id
                 ));
                 resources.push(failed(
@@ -339,8 +341,7 @@ async fn apply(
     }
 
     for nsg in &inventory.nsgs {
-        let deleted = delete_nsg_until_gone(context, &network, &nsg.id).await;
-        match deleted {
+        match delete_nsg_until_gone(context, &network, &nsg.id).await {
             Ok(()) => resources.push(deleted_outcome(
                 "network security group",
                 &nsg.id,
@@ -348,7 +349,7 @@ async fn apply(
             )),
             Err(error) => {
                 warnings.push(format!(
-                    "network security group {} could not be deleted: {error}",
+                    "network security group {} could not be verified deleted: {error}",
                     nsg.id
                 ));
                 resources.push(failed(
@@ -370,7 +371,7 @@ async fn apply(
             )),
             Err(error) => {
                 warnings.push(format!(
-                    "subnet {} could not be deleted: {error}",
+                    "subnet {} could not be verified deleted: {error}",
                     subnet.id
                 ));
                 resources.push(failed(
@@ -393,7 +394,7 @@ async fn apply(
             )),
             Err(error) => {
                 warnings.push(format!(
-                    "internet gateway {} could not be deleted: {error}",
+                    "internet gateway {} could not be verified deleted: {error}",
                     gateway.id
                 ));
                 resources.push(failed(
@@ -410,7 +411,10 @@ async fn apply(
         match delete_vcn_until_gone(context, &network, &vcn.id).await {
             Ok(()) => resources.push(deleted_outcome("VCN", &vcn.id, vcn.display_name.clone())),
             Err(error) => {
-                warnings.push(format!("VCN {} could not be deleted: {error}", vcn.id));
+                warnings.push(format!(
+                    "VCN {} could not be verified deleted: {error}",
+                    vcn.id
+                ));
                 resources.push(failed("VCN", &vcn.id, vcn.display_name.clone(), &error));
             }
         }
@@ -447,17 +451,17 @@ async fn wait_instance_gone(context: &CommandContext, instance: &Instance) -> bo
     }
 }
 
-async fn delete_boot_until_gone(
-    context: &CommandContext,
-    api: &BlockStorageApi<'_>,
-    id: &str,
-) -> Result<()> {
+async fn request_delete<F, Fut>(context: &CommandContext, mut delete: F) -> Result<bool>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+{
     let poll = context.poll();
     let deadline = std::time::Instant::now() + poll.timeout;
     loop {
-        match api.delete_boot_volume(id).await {
-            Ok(()) => return Ok(()),
-            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        match delete().await {
+            Ok(()) => return Ok(false),
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(true),
             Err(error) if retryable_delete(&error) && std::time::Instant::now() < deadline => {
                 tokio::time::sleep(poll.interval).await;
             }
@@ -466,12 +470,85 @@ async fn delete_boot_until_gone(
     }
 }
 
+async fn wait_until_absent<F, Fut>(
+    context: &CommandContext,
+    kind: &str,
+    id: &str,
+    mut probe: F,
+) -> Result<()>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<bool>>,
+{
+    let poll = context.poll();
+    let deadline = std::time::Instant::now() + poll.timeout;
+    loop {
+        match probe().await {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(error)
+                if retryable_probe(&error) && std::time::Instant::now() < deadline => {}
+            Err(error) => return Err(error),
+        }
+
+        if std::time::Instant::now() >= deadline {
+            return Err(Error::timeout(format!(
+                "{kind} {id} did not disappear before the reset deadline"
+            ))
+            .with_context(
+                "OCI accepted the delete request, but a fresh read still reports the resource",
+            )
+            .with_remediation(
+                "wait for OCI to settle, then re-run `oci-free reset`; ownership will be re-proven before any retry",
+            ));
+        }
+        tokio::time::sleep(poll.interval).await;
+    }
+}
+
+async fn delete_boot_until_gone(
+    context: &CommandContext,
+    api: &BlockStorageApi<'_>,
+    id: &str,
+) -> Result<()> {
+    if request_delete(context, || api.delete_boot_volume(id)).await? {
+        return Ok(());
+    }
+
+    wait_until_absent(context, "boot volume", id, || async {
+        match api.get_boot_volume(id).await {
+            Ok(volume)
+                if volume
+                    .lifecycle_state
+                    .as_deref()
+                    .is_some_and(|state| state.eq_ignore_ascii_case("TERMINATED")) =>
+            {
+                Ok(true)
+            }
+            Ok(_) => Ok(false),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(true),
+            Err(error) => Err(error),
+        }
+    })
+    .await
+}
+
 async fn delete_nsg_until_gone(
     context: &CommandContext,
     api: &NetworkApi<'_>,
     id: &str,
 ) -> Result<()> {
-    retry_network_delete(context, || api.delete_nsg(id)).await
+    if request_delete(context, || api.delete_nsg(id)).await? {
+        return Ok(());
+    }
+    wait_until_absent(context, "network security group", id, || async {
+        match api.get_nsg(id).await {
+            Ok(_) => Ok(false),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(true),
+            Err(error) => Err(error),
+        }
+    })
+    .await
 }
 
 async fn delete_subnet_until_gone(
@@ -479,7 +556,17 @@ async fn delete_subnet_until_gone(
     api: &NetworkApi<'_>,
     id: &str,
 ) -> Result<()> {
-    retry_network_delete(context, || api.delete_subnet(id)).await
+    if request_delete(context, || api.delete_subnet(id)).await? {
+        return Ok(());
+    }
+    wait_until_absent(context, "subnet", id, || async {
+        match api.get_subnet(id).await {
+            Ok(_) => Ok(false),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(true),
+            Err(error) => Err(error),
+        }
+    })
+    .await
 }
 
 async fn delete_vcn_until_gone(
@@ -487,7 +574,17 @@ async fn delete_vcn_until_gone(
     api: &NetworkApi<'_>,
     id: &str,
 ) -> Result<()> {
-    retry_network_delete(context, || api.delete_vcn(id)).await
+    if request_delete(context, || api.delete_vcn(id)).await? {
+        return Ok(());
+    }
+    wait_until_absent(context, "VCN", id, || async {
+        match api.get_vcn(id).await {
+            Ok(_) => Ok(false),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(true),
+            Err(error) => Err(error),
+        }
+    })
+    .await
 }
 
 async fn delete_gateway_until_gone(
@@ -501,7 +598,7 @@ async fn delete_gateway_until_gone(
     let mut detached = false;
     loop {
         match api.delete_internet_gateway(gateway_id).await {
-            Ok(()) => return Ok(()),
+            Ok(()) => break,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
             Err(error)
                 if error.kind() == ErrorKind::Conflict && !detached && !vcn_id.is_empty() =>
@@ -515,25 +612,15 @@ async fn delete_gateway_until_gone(
             Err(error) => return Err(error),
         }
     }
-}
 
-async fn retry_network_delete<F, Fut>(context: &CommandContext, mut delete: F) -> Result<()>
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = Result<()>>,
-{
-    let poll = context.poll();
-    let deadline = std::time::Instant::now() + poll.timeout;
-    loop {
-        match delete().await {
-            Ok(()) => return Ok(()),
-            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
-            Err(error) if retryable_delete(&error) && std::time::Instant::now() < deadline => {
-                tokio::time::sleep(poll.interval).await;
-            }
-            Err(error) => return Err(error),
+    wait_until_absent(context, "internet gateway", gateway_id, || async {
+        match api.get_internet_gateway(gateway_id).await {
+            Ok(_) => Ok(false),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(true),
+            Err(error) => Err(error),
         }
-    }
+    })
+    .await
 }
 
 fn retryable_delete(error: &Error) -> bool {
@@ -543,6 +630,15 @@ fn retryable_delete(error: &Error) -> bool {
             | ErrorKind::InvalidInput
             | ErrorKind::TransientServer
             | ErrorKind::RateLimited
+            | ErrorKind::Network
+            | ErrorKind::Timeout
+    )
+}
+
+fn retryable_probe(error: &Error) -> bool {
+    matches!(
+        error.kind(),
+        ErrorKind::TransientServer | ErrorKind::RateLimited | ErrorKind::Network | ErrorKind::Timeout
     )
 }
 
@@ -552,7 +648,7 @@ fn deleted_outcome(kind: &str, id: &str, name: Option<String>) -> ResetOutcome {
         id: id.to_owned(),
         name,
         outcome: "deleted".to_owned(),
-        reason: "created by oci-free".to_owned(),
+        reason: "created by oci-free; deletion verified by a fresh OCI read".to_owned(),
     }
 }
 
@@ -584,4 +680,73 @@ pub fn render_human(result: &ResetResult) -> String {
         out.push_str(&format!("warning: {warning}\n"));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::testing::mock_oci::{MockOci, Reply};
+
+    #[tokio::test]
+    async fn accepted_nsg_delete_is_not_complete_until_a_fresh_read_says_gone() {
+        let id = "ocid1.networksecuritygroup.oc1.iad.resetwait";
+        let path = format!("/networkSecurityGroups/{id}");
+        let mock = MockOci::builder()
+            .reply("DELETE", &path, Reply::new(204, ""))
+            .route(
+                "GET",
+                &path,
+                vec![
+                    Reply::json(&json!({
+                        "id": id,
+                        "vcnId": "ocid1.vcn.oc1.iad.a",
+                        "lifecycleState": "TERMINATING"
+                    })),
+                    Reply::new(404, r#"{"code":"NotAuthorizedOrNotFound","message":"gone"}"#),
+                ],
+            )
+            .start()
+            .await;
+        let context = CommandContext::for_tests(mock.client(), "us-ashburn-1");
+        let api = NetworkApi::new(context.client());
+
+        delete_nsg_until_gone(&context, &api, id)
+            .await
+            .expect("delete settles");
+
+        let requests = mock.requests();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[0].method(), "DELETE");
+        assert_eq!(requests[1].method(), "GET");
+        assert_eq!(requests[2].method(), "GET");
+    }
+
+    #[tokio::test]
+    async fn accepted_delete_that_never_disappears_times_out_instead_of_claiming_success() {
+        let id = "ocid1.networksecuritygroup.oc1.iad.resetstuck";
+        let path = format!("/networkSecurityGroups/{id}");
+        let mock = MockOci::builder()
+            .reply("DELETE", &path, Reply::new(204, ""))
+            .get(
+                &path,
+                &json!({
+                    "id": id,
+                    "vcnId": "ocid1.vcn.oc1.iad.a",
+                    "lifecycleState": "TERMINATING"
+                }),
+            )
+            .start()
+            .await;
+        let context = CommandContext::for_tests(mock.client(), "us-ashburn-1");
+        let api = NetworkApi::new(context.client());
+
+        let error = delete_nsg_until_gone(&context, &api, id)
+            .await
+            .expect_err("a stuck resource must not be reported deleted");
+        assert_eq!(error.kind(), ErrorKind::Timeout);
+        assert!(error.message().contains("did not disappear"));
+        assert!(error.remediation().contains("re-run `oci-free reset`"));
+    }
 }
