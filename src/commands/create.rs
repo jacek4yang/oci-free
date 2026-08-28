@@ -41,7 +41,7 @@ use crate::{
         ownership::{ROLE_INSTANCE, ROLE_INSTANCE_NSG, created_tags},
         plan::{Approval, BillingRisk, ChangeKind, ExposureDelta, MutationPlan, PlannedChange},
     },
-    error::{Error, Result},
+    error::{Error, ErrorKind, Result},
     interactive,
     oci::{
         compute::{
@@ -49,7 +49,7 @@ use crate::{
             LaunchSourceDetails, LaunchVnicDetails, Shape,
         },
         identity::IdentityApi,
-        network::{CreateNsg, NetworkApi},
+        network::{CreateNsg, NetworkApi, NetworkSecurityGroup},
     },
 };
 
@@ -575,6 +575,10 @@ async fn apply(
         },
     };
 
+    if let Err(error) = await_subnet_available(context, &network.subnet_id).await {
+        return Err(recover(context, &created, error, "the managed subnet").await);
+    }
+
     let nsg = match create_nsg(context, decision, &network, approval).await {
         Ok(nsg) => nsg,
         Err(error) => {
@@ -587,15 +591,26 @@ async fn apply(
             .await);
         }
     };
-    created.nsg_id = Some(nsg.clone());
+    created.nsg_id = Some(nsg.id.clone());
+
+    if let Err(error) = await_nsg_available(context, &nsg).await {
+        return Err(recover(
+            context,
+            &created,
+            error,
+            "the instance's network security group",
+        )
+        .await);
+    }
+    let nsg_id = nsg.id;
 
     if let Some(source) = &decision.ssh_source
-        && let Err(error) = add_ssh_rule(context, &nsg, source, approval).await
+        && let Err(error) = add_ssh_rule(context, &nsg_id, source, approval).await
     {
         return Err(recover(context, &created, error, "the SSH ingress rule").await);
     }
 
-    let instance = match launch(context, decision, &network, &nsg, approval).await {
+    let instance = match launch(context, decision, &network, &nsg_id, approval).await {
         Ok(instance) => instance,
         Err(error) => return Err(recover(context, &created, error, "the instance").await),
     };
@@ -616,11 +631,11 @@ async fn apply(
         exposure
             .attached_nsgs
             .iter()
-            .any(|attached| attached.id == nsg)
+            .any(|attached| attached.id == nsg_id)
     });
     if !nsg_verified {
         warnings.push(format!(
-            "the managed network security group {nsg} was not found attached to the instance's \
+            "the managed network security group {nsg_id} was not found attached to the instance's \
              VNIC; run `oci-free vm net {} show` to check",
             decision.name
         ));
@@ -657,7 +672,7 @@ async fn apply(
             .map(|address| format!("ssh opc@{address}")),
         public_ip,
         private_ip,
-        nsg_id: Some(nsg),
+        nsg_id: Some(nsg_id),
         nsg_verified,
         ssh_reachable,
         created,
@@ -684,14 +699,104 @@ fn verification_note(exposure: Option<&EffectiveExposure>) -> String {
     }
 }
 
+async fn await_subnet_available(context: &CommandContext, subnet_id: &str) -> Result<()> {
+    let api = NetworkApi::new(context.client());
+    let poll = context.poll();
+    let deadline = std::time::Instant::now() + poll.timeout;
+
+    loop {
+        let state = match api.get_subnet(subnet_id).await {
+            Ok(subnet) => {
+                let state = subnet
+                    .lifecycle_state
+                    .unwrap_or_else(|| "UNKNOWN".to_owned());
+                if state.eq_ignore_ascii_case("AVAILABLE") {
+                    return Ok(());
+                }
+                if matches!(state.as_str(), "TERMINATING" | "TERMINATED") {
+                    return Err(Error::malformed_response(format!(
+                        "the managed subnet reached {state} before the instance could be launched"
+                    ))
+                    .with_context(format!("subnet {subnet_id}"))
+                    .with_remediation(
+                        "run `oci-free vm create` again after checking the managed network",
+                    ));
+                }
+                state
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => "not yet visible".to_owned(),
+            Err(error) => return Err(error),
+        };
+
+        if std::time::Instant::now() >= deadline {
+            return Err(Error::timeout(
+                "the managed subnet did not become AVAILABLE before the network readiness deadline",
+            )
+            .with_context(format!("subnet {subnet_id} was {state}"))
+            .with_remediation(
+                "wait for OCI networking to finish provisioning, then retry `oci-free vm create`",
+            ));
+        }
+        tokio::time::sleep(poll.interval).await;
+    }
+}
+
+async fn await_nsg_available(context: &CommandContext, nsg: &NetworkSecurityGroup) -> Result<()> {
+    if nsg
+        .lifecycle_state
+        .as_deref()
+        .is_some_and(|state| state.eq_ignore_ascii_case("AVAILABLE"))
+    {
+        return Ok(());
+    }
+
+    let api = NetworkApi::new(context.client());
+    let poll = context.poll();
+    let deadline = std::time::Instant::now() + poll.timeout;
+
+    loop {
+        let state = match api.get_nsg(&nsg.id).await {
+            Ok(current) => {
+                let state = current
+                    .lifecycle_state
+                    .unwrap_or_else(|| "UNKNOWN".to_owned());
+                if state.eq_ignore_ascii_case("AVAILABLE") {
+                    return Ok(());
+                }
+                if matches!(state.as_str(), "TERMINATING" | "TERMINATED") {
+                    return Err(Error::malformed_response(format!(
+                        "the network security group reached {state} before its rules could be configured"
+                    ))
+                    .with_context(format!("network security group {}", nsg.id))
+                    .with_remediation("retry `oci-free vm create`; the failed operation will only reuse resources it can prove it owns"));
+                }
+                state
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => "not yet visible".to_owned(),
+            Err(error) => return Err(error),
+        };
+
+        if std::time::Instant::now() >= deadline {
+            return Err(Error::timeout(
+                "the network security group did not become AVAILABLE before the readiness deadline",
+            )
+            .with_context(format!("network security group {} was {state}", nsg.id))
+            .with_remediation(
+                "wait for OCI networking to finish provisioning, then retry `oci-free vm create`",
+            ));
+        }
+        tokio::time::sleep(poll.interval).await;
+    }
+}
+
 async fn create_nsg(
     context: &CommandContext,
     decision: &Decision,
     network: &ManagedNetwork,
     approval: &Approval,
-) -> Result<String> {
+) -> Result<NetworkSecurityGroup> {
     debug_assert!(approval.operation() == "vm.create");
-    let nsg = NetworkApi::new(context.client())
+    NetworkApi::new(context.client())
         .create_nsg(
             &CreateNsg {
                 compartment_id: context.tenancy().as_str().to_owned(),
@@ -701,8 +806,7 @@ async fn create_nsg(
             },
             &vmnet::retry_token("nsg", &decision.name),
         )
-        .await?;
-    Ok(nsg.id)
+        .await
 }
 
 async fn add_ssh_rule(
@@ -872,3 +976,90 @@ pub fn render_human(result: &CreateResult) -> String {
 #[cfg(test)]
 #[path = "create_tests.rs"]
 mod create_tests;
+
+#[cfg(test)]
+mod provisioning_regression_tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::testing::mock_oci::{MockOci, Reply};
+
+    #[tokio::test]
+    async fn waits_for_a_new_nsg_to_become_available_before_configuring_it() {
+        let nsg_id = "ocid1.networksecuritygroup.oc1.iad.provisioning";
+        let initial: NetworkSecurityGroup = serde_json::from_value(json!({
+            "id": nsg_id,
+            "vcnId": "ocid1.vcn.oc1.iad.a",
+            "lifecycleState": "PROVISIONING"
+        }))
+        .expect("nsg");
+
+        let mock = MockOci::builder()
+            .route(
+                "GET",
+                nsg_id,
+                vec![
+                    Reply::json(&json!({
+                        "id": nsg_id,
+                        "vcnId": "ocid1.vcn.oc1.iad.a",
+                        "lifecycleState": "PROVISIONING"
+                    })),
+                    Reply::json(&json!({
+                        "id": nsg_id,
+                        "vcnId": "ocid1.vcn.oc1.iad.a",
+                        "lifecycleState": "AVAILABLE"
+                    })),
+                ],
+            )
+            .start()
+            .await;
+        let context = CommandContext::for_tests(mock.client(), "us-ashburn-1");
+
+        await_nsg_available(&context, &initial)
+            .await
+            .expect("the NSG becomes available");
+
+        let reads = mock
+            .requests()
+            .into_iter()
+            .filter(|request| request.method() == "GET")
+            .count();
+        assert_eq!(reads, 2, "the provisioning state must be polled");
+    }
+
+    #[tokio::test]
+    async fn waits_for_a_subnet_to_become_available_before_launch() {
+        let subnet_id = "ocid1.subnet.oc1.iad.provisioning";
+        let mock = MockOci::builder()
+            .route(
+                "GET",
+                subnet_id,
+                vec![
+                    Reply::json(&json!({
+                        "id": subnet_id,
+                        "vcnId": "ocid1.vcn.oc1.iad.a",
+                        "lifecycleState": "PROVISIONING"
+                    })),
+                    Reply::json(&json!({
+                        "id": subnet_id,
+                        "vcnId": "ocid1.vcn.oc1.iad.a",
+                        "lifecycleState": "AVAILABLE"
+                    })),
+                ],
+            )
+            .start()
+            .await;
+        let context = CommandContext::for_tests(mock.client(), "us-ashburn-1");
+
+        await_subnet_available(&context, subnet_id)
+            .await
+            .expect("the subnet becomes available");
+
+        let reads = mock
+            .requests()
+            .into_iter()
+            .filter(|request| request.method() == "GET")
+            .count();
+        assert_eq!(reads, 2, "the provisioning state must be polled");
+    }
+}
