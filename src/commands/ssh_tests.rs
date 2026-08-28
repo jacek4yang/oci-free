@@ -93,6 +93,20 @@ async fn discovers_the_address_and_the_images_default_login_name() {
 }
 
 #[tokio::test]
+async fn a_custom_launch_username_is_reused_by_vm_ssh() {
+    let mock = mock(Some("203.0.113.17"), "Oracle Linux").await;
+    let mut instance: crate::oci::compute::Instance =
+        serde_json::from_value(instance_json()).expect("instance");
+    instance
+        .freeform_tags
+        .insert("oci-free:ssh-user".to_owned(), "jacek".to_owned());
+
+    let (user, warning) = default_user(&context(&mock), &instance).await;
+    assert_eq!(user, "jacek");
+    assert!(warning.is_none());
+}
+
+#[tokio::test]
 async fn ubuntu_images_use_the_ubuntu_login_name() {
     let mock = mock(Some("203.0.113.17"), "Canonical Ubuntu").await;
     let target = run(&context(&mock), "free-arm-1", None, None, SshMode::Print)

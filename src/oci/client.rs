@@ -14,6 +14,7 @@
 use std::time::{Duration, Instant};
 
 use reqwest::{StatusCode, header};
+use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Serialize, de::DeserializeOwned};
 use url::Url;
 
@@ -35,6 +36,17 @@ use crate::{
 const REQUEST_ID_HEADER: &str = "opc-request-id";
 /// Header carrying the pagination cursor for the next page.
 const NEXT_PAGE_HEADER: &str = "opc-next-page";
+
+/// Retry jitter in `[0, 1]`. Jitter is not security-sensitive; `0.5`
+/// is a safe deterministic fallback if platform randomness is unavailable.
+fn retry_jitter() -> f64 {
+    let mut bytes = [0_u8; 8];
+    if SystemRandom::new().fill(&mut bytes).is_err() {
+        return 0.5;
+    }
+    let sample = u64::from_le_bytes(bytes);
+    sample as f64 / u64::MAX as f64
+}
 
 /// Transport tunables. The defaults are deliberately conservative: a CLI that
 /// hangs is worse than one that reports a timeout the user can retry.
@@ -510,7 +522,7 @@ impl OciClient {
             };
 
             spent = spent.saturating_add(started.elapsed());
-            let jitter: f64 = rand::random_range(0.0..1.0);
+            let jitter = retry_jitter();
 
             match self
                 .retry

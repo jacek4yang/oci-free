@@ -13,6 +13,12 @@
 //! * `close` reports residual exposure. Removing the managed rule is not the
 //!   same as closing the port.
 
+use std::{
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+use ring::rand::{SecureRandom, SystemRandom};
 use serde::Serialize;
 
 use crate::{
@@ -609,8 +615,8 @@ fn orphaned_nsg(nsg_id: &str, nsg_name: &str, cause: &Error) -> Error {
         cause.message()
     ))
     .with_remediation(
-        "re-run the same command: the create carries an idempotency token, so it reuses this \
-         group rather than making a second one",
+        "re-run the same command: discovery reuses the tagged group if it still exists; if \
+         it was deleted, the new create receives a fresh OCI retry token",
     )
 }
 
@@ -836,15 +842,37 @@ pub fn oci_protocol(protocol: Protocol) -> &'static str {
     }
 }
 
-/// A stable idempotency token, so a replayed create does not duplicate.
+/// Fallback uniqueness when the operating-system RNG is temporarily unavailable.
+static RETRY_NONCE_FALLBACK: AtomicU64 = AtomicU64::new(1);
+
+fn retry_nonce() -> u64 {
+    let mut bytes = [0_u8; 8];
+    if SystemRandom::new().fill(&mut bytes).is_ok() {
+        return u64::from_le_bytes(bytes);
+    }
+
+    // The retry token is not a credential. This fallback only prevents
+    // accidental token reuse when OS randomness is temporarily unavailable.
+    let clock = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| {
+            duration.as_secs().rotate_left(32) ^ u64::from(duration.subsec_nanos())
+        });
+    clock ^ RETRY_NONCE_FALLBACK.fetch_add(1, Ordering::Relaxed)
+}
+
+/// An OCI idempotency token scoped to one logical create invocation.
+///
+/// The caller constructs this once and passes it into `OciClient`, whose
+/// transport retries therefore reuse the same token. A later CLI invocation
+/// gets a fresh nonce, which matters because OCI can invalidate an old retry
+/// token after the resource created with it is deleted.
 #[must_use]
 pub fn retry_token(kind: &str, seed: &str) -> String {
-    // OCI compares the token verbatim, so it must be stable for the same
-    // logical operation and different for a different one.
-    let digest = seed.bytes().fold(0u64, |acc, byte| {
-        acc.wrapping_mul(31).wrapping_add(u64::from(byte))
+    let digest = seed.bytes().fold(0_u32, |acc, byte| {
+        acc.wrapping_mul(31).wrapping_add(u32::from(byte))
     });
-    format!("oci-free-{kind}-{digest:016x}")
+    format!("oci-free-{kind}-{digest:08x}-{:016x}", retry_nonce())
 }
 
 /// Render `vm net show` for a terminal.

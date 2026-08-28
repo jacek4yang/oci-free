@@ -53,6 +53,7 @@ pub struct ResetResult {
 
 struct Inventory {
     instances: Vec<Instance>,
+    boot_volumes: Vec<crate::oci::block_storage::BootVolume>,
     nsgs: Vec<crate::oci::network::NetworkSecurityGroup>,
     vcns: Vec<crate::oci::network::Vcn>,
     subnets: Vec<crate::oci::network::Subnet>,
@@ -74,6 +75,8 @@ pub async fn run(
 async fn discover(context: &CommandContext) -> Result<Inventory> {
     let compute = ComputeApi::new(context.client());
     let network = NetworkApi::new(context.client());
+    let identity = IdentityApi::new(context.client());
+    let block = BlockStorageApi::new(context.client());
 
     let instances = compute
         .list_instances(context.tenancy())
@@ -85,6 +88,22 @@ async fn discover(context: &CommandContext) -> Result<Inventory> {
                 && !instance.lifecycle_state.eq_ignore_ascii_case("TERMINATED")
         })
         .collect::<Vec<_>>();
+
+    let mut boot_volumes = Vec::new();
+    for domain in identity
+        .list_availability_domains(context.tenancy())
+        .await?
+    {
+        boot_volumes.extend(
+            block
+                .list_boot_volumes(context.tenancy(), &domain.name)
+                .await?
+                .into_iter()
+                .filter(|volume| {
+                    classify(&volume.freeform_tags).permits_deletion() && volume.consumes_storage()
+                }),
+        );
+    }
 
     let nsgs = network
         .list_nsgs(context.tenancy(), None)
@@ -133,6 +152,7 @@ async fn discover(context: &CommandContext) -> Result<Inventory> {
 
     Ok(Inventory {
         instances,
+        boot_volumes,
         nsgs,
         vcns,
         subnets,
@@ -153,6 +173,18 @@ fn build_plan(context: &CommandContext, inventory: &Inventory) -> MutationPlan {
             )
             .with_id(instance.id.clone())
             .with_ownership(classify(&instance.freeform_tags)),
+        );
+    }
+    for volume in &inventory.boot_volumes {
+        plan.add_change(
+            PlannedChange::new(
+                ChangeKind::Delete,
+                "boot volume",
+                volume.label(),
+                "deleted if it still exists after instance termination",
+            )
+            .with_id(volume.id.clone())
+            .with_ownership(classify(&volume.freeform_tags)),
         );
     }
     for nsg in &inventory.nsgs {
@@ -280,12 +312,30 @@ async fn apply(
         }
     }
 
-    // A retained boot volume from an earlier failed/manual test can outlive its
-    // instance. Delete only volumes carrying oci-free's Created ownership tag.
-    if let Err(error) = delete_managed_boot_volumes(context, &mut resources, &mut warnings).await {
-        warnings.push(format!(
-            "managed boot-volume discovery was incomplete: {error}"
-        ));
+    // Boot volumes were inventoried before confirmation, so every destructive
+    // target is represented in the approved plan. A volume already removed by
+    // instance termination returns NotFound and is treated as clean.
+    let block = BlockStorageApi::new(context.client());
+    for volume in &inventory.boot_volumes {
+        match delete_boot_until_gone(context, &block, &volume.id).await {
+            Ok(()) => resources.push(deleted_outcome(
+                "boot volume",
+                &volume.id,
+                volume.display_name.clone(),
+            )),
+            Err(error) => {
+                warnings.push(format!(
+                    "boot volume {} could not be deleted: {error}",
+                    volume.id
+                ));
+                resources.push(failed(
+                    "boot volume",
+                    &volume.id,
+                    volume.display_name.clone(),
+                    &error,
+                ));
+            }
+        }
     }
 
     for nsg in &inventory.nsgs {
@@ -395,47 +445,6 @@ async fn wait_instance_gone(context: &CommandContext, instance: &Instance) -> bo
         }
         tokio::time::sleep(poll.interval).await;
     }
-}
-
-async fn delete_managed_boot_volumes(
-    context: &CommandContext,
-    resources: &mut Vec<ResetOutcome>,
-    warnings: &mut Vec<String>,
-) -> Result<()> {
-    let identity = IdentityApi::new(context.client());
-    let block = BlockStorageApi::new(context.client());
-    for domain in identity
-        .list_availability_domains(context.tenancy())
-        .await?
-    {
-        for volume in block
-            .list_boot_volumes(context.tenancy(), &domain.name)
-            .await?
-            .into_iter()
-            .filter(|volume| classify(&volume.freeform_tags).permits_deletion())
-        {
-            match delete_boot_until_gone(context, &block, &volume.id).await {
-                Ok(()) => resources.push(deleted_outcome(
-                    "boot volume",
-                    &volume.id,
-                    volume.display_name.clone(),
-                )),
-                Err(error) => {
-                    warnings.push(format!(
-                        "boot volume {} could not be deleted: {error}",
-                        volume.id
-                    ));
-                    resources.push(failed(
-                        "boot volume",
-                        &volume.id,
-                        volume.display_name.clone(),
-                        &error,
-                    ));
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 async fn delete_boot_until_gone(

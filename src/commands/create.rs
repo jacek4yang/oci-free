@@ -234,14 +234,14 @@ fn validate_hostname(value: &str) -> Result<String> {
     let bytes = value.as_bytes();
     let valid = !bytes.is_empty()
         && bytes.len() <= 63
-        && bytes[0].is_ascii_alphanumeric()
+        && bytes[0].is_ascii_lowercase()
         && bytes[bytes.len() - 1].is_ascii_alphanumeric()
         && bytes
             .iter()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-');
     if !valid {
         return Err(Error::invalid_input(format!("`{value}` is not a valid hostname label"))
-            .with_context("use 1-63 lowercase ASCII letters, digits, or `-`, with an alphanumeric first and last character")
+            .with_context("use 1-63 lowercase ASCII letters, digits, or `-`; start with a lowercase letter and end with a letter or digit")
             .with_remediation("for example: --hostname oracle-x86-01"));
     }
     Ok(value.to_owned())
