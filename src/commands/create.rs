@@ -718,7 +718,9 @@ async fn await_subnet_available(context: &CommandContext, subnet_id: &str) -> Re
                         "the managed subnet reached {state} before the instance could be launched"
                     ))
                     .with_context(format!("subnet {subnet_id}"))
-                    .with_remediation("run `oci-free vm create` again after checking the managed network"));
+                    .with_remediation(
+                        "run `oci-free vm create` again after checking the managed network",
+                    ));
                 }
                 state
             }
