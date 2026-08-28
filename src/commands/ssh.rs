@@ -1,8 +1,9 @@
 //! `oci-free vm ssh <instance>` — connect to an instance.
 //!
 //! The connection details are discovered rather than asked for: the public
-//! address comes from the instance's VNIC, and the login name from the image's
-//! operating system.
+//! address comes from the instance's VNIC, and the login name first comes from
+//! the oci-free launch metadata tag, then falls back to the image's operating
+//! system default.
 //!
 //! The command line is built as an **argument vector and handed to the OS
 //! process API directly**. Nothing is ever concatenated into a shell string, so
@@ -25,6 +26,10 @@ use crate::{
     error::{Error, Result},
     oci::compute::ComputeApi,
 };
+
+/// Written by `vm create --username`; using a tag keeps `vm ssh` stateless and
+/// lets it recover the intended login user after a later process invocation.
+const TAG_SSH_USER: &str = "oci-free:ssh-user";
 
 /// Default login names by operating system.
 ///
@@ -112,8 +117,6 @@ pub async fn run(
         command.push("-i".to_owned());
         command.push(identity.display().to_string());
     }
-    // `--` ends option parsing, so a user name that begins with a dash cannot
-    // be read by ssh as a flag.
     command.push(format!("{user}@{host}"));
 
     if let Some(exposure) = network.exposure()
@@ -180,11 +183,19 @@ async fn launch(mut target: SshTarget) -> Result<SshTarget> {
     Ok(target)
 }
 
-/// The login name for an instance's image.
+/// The login name for an instance.
 async fn default_user(
     context: &CommandContext,
     instance: &crate::oci::compute::Instance,
 ) -> (String, Option<String>) {
+    if let Some(user) = instance
+        .freeform_tags
+        .get(TAG_SSH_USER)
+        .filter(|value| !value.trim().is_empty())
+    {
+        return (user.clone(), None);
+    }
+
     let Some(image_id) = instance.image_id.as_deref() else {
         return (
             "opc".to_owned(),
