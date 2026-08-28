@@ -18,13 +18,17 @@ and will not change within a major version.
 | 4 | permission | OCI accepted the identity but refused the operation. |
 | 5 | safety | The policy engine refused, **or** `vm net audit` found something. |
 | 6 | transient | Network, timeout, or throttling. Safe to retry. |
-| 7 | partial | A multi-step mutation stopped part-way. Needs attention. |
+| 7 | partial | A multi-step mutation stopped part-way, or `reset` retained at least one targeted resource. Needs attention. |
 
 Two commands deliberately carry their verdict in the exit code:
 
 - `doctor` exits 3 when any check fails, so a setup script can stop early;
 - `vm net audit` exits 5 when the audit found anything at warning severity or
   above, so a scheduled run can alert without parsing output.
+
+`reset` exits 7 rather than 0 when any resource in its approved cleanup plan
+remains. Re-run it after OCI finishes asynchronous teardown or inspect the
+reported dependency; a partial cleanup is never success-shaped.
 
 `vm ssh` passes the SSH client's own exit code through, so wrapping
 `oci-free vm ssh` behaves like wrapping `ssh`.
@@ -172,6 +176,8 @@ prompting off and every material choice must then be a flag.
 $ oci-free vm create \
     --shape free:arm --ocpus 2 --memory 12 \
     --name web-1 \
+    --username deploy \
+    --hostname web-1 \
     --ssh-key ~/.ssh/id_ed25519.pub \
     --ssh-source 198.51.100.7/32 \
     --non-interactive --yes
@@ -184,8 +190,20 @@ description and `billingType` — never against a hard-coded name.
 Nothing is pinned: not the availability domain, not the image, not the shape.
 The image is the newest compatible platform image from the current catalogue.
 
+`--username USER` asks cloud-init to create a key-only Linux login account with
+`/bin/bash` and passwordless sudo. A custom user requires `--ssh-key`, because
+oci-free deliberately refuses to create an account that would have no supported
+login credential. The chosen user is recorded in an oci-free ownership-adjacent
+freeform tag so a later `vm ssh` invocation can recover it without local state.
+
+`--hostname HOSTNAME` sets both the guest hostname through cloud-init and the
+primary VNIC hostname label. It accepts a conservative OCI/RFC-style label: 1–63
+lowercase ASCII letters, digits, or `-`, starting with a lowercase letter and
+ending with a letter or digit.
+
 The plan is shown and confirmed before anything is created. `--yes` accepts it
-non-interactively; there is no way to reach a write without an approved plan.
+non-interactively; there is no way through the command-layer mutation workflow
+without an approved plan.
 
 `--ssh-source` accepts a CIDR, `myip`, or `none` to leave SSH closed. It is
 never defaulted: a non-interactive run without it is an error, not an open
@@ -227,11 +245,14 @@ shell. An instance with no public address says so plainly; in `--json`,
 
 ### `oci-free vm ssh <instance> [-l USER] [-i KEY] [--print]`
 
-Connects using the discovered address and the image's usual login name.
+Connects using the discovered address. If the instance was created with
+`oci-free vm create --username`, that login name is recovered from the instance
+tag; otherwise the image's usual login account is used. `--user`/`-l` remains an
+explicit override.
 
 The command is built as an argument vector and handed to the OS process API. No
-shell is involved, so a name containing shell metacharacters is one opaque
-argument and cannot become a command.
+shell is involved. The login name is supplied as the value of OpenSSH's `-l`
+option, so even a hostile explicit value cannot become a separate SSH option.
 
 `--print` shows the command instead of running it. `--json` implies `--print`: a
 machine-readable command whose side effect is stealing the terminal would be
@@ -273,3 +294,28 @@ address up unless you ask for it.
 Removes the matching rule from the managed NSG, then re-reads the effective
 state and reports anything that still allows the port. Removing the instance
 rule is not the same as closing the port.
+
+## Repeated test cleanup
+
+### `oci-free reset [--yes]`
+
+Returns the resources **created by oci-free** in the home region to a clean test
+state. This is deliberately narrower than “delete everything in the tenancy”.
+Names are never ownership evidence.
+
+Before any write, `reset` inventories every target and renders one destructive
+`MutationPlan`. Only resources carrying deletion-permitting oci-free ownership
+tags are candidates; instances, NSGs, subnets, internet gateways, and VCNs must
+also carry the recognized role for that resource type. Untagged resources,
+reused resources, and user-owned lookalikes are not deleted.
+
+The deletion order is dependency-aware: instances first, then proven managed
+boot volumes, instance NSGs, subnets, internet gateways (after removing the
+managed route reference when necessary), and VCNs last. OCI teardown is
+asynchronous, so deletion uses bounded polling/retry rather than an unbounded
+wait.
+
+Interactive use asks for confirmation after the complete plan is printed.
+`--yes` accepts that plan for automation. If OCI retains any targeted resource,
+the command reports it and exits 7; re-running after dependencies settle is
+safe because discovery starts from fresh OCI state and ownership is re-proven.
