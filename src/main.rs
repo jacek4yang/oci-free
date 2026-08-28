@@ -77,7 +77,7 @@ async fn run(cli: &Cli) -> Result<ExitCode> {
             Ok(if result.retained == 0 {
                 success
             } else {
-                ExitCodeKind::PartialMutation.exit_code()
+                ExitCodeKind::Partial.exit_code()
             })
         }
         Command::Account { command } => match command {
