@@ -404,7 +404,7 @@ pub async fn provision(
     })
 }
 
-async fn detach_gateway_routes(
+pub(crate) async fn detach_gateway_routes(
     context: &CommandContext,
     vcn_id: &str,
     gateway_id: &str,
