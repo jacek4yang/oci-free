@@ -31,7 +31,7 @@ clap = { version = "4.5", features = ["derive"] }
 # Interactive prompts only; no full-screen TUI (see CLAUDE.md).
 dialoguer = { version = "0.12", default-features = false }
 httpdate = "1.0"
-md-5 = "0.10"
+md-5 = "0.11"
 # rustls only: the binary must not depend on a system OpenSSL.
 reqwest = { version = "0.13", default-features = false, features = [
     "rustls-no-provider",
