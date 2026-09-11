@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "verified_on": "2026-08-27",
+  "verified_on": "2026-09-11",
   "provenance": [
     {
       "source": "Oracle Cloud Infrastructure Free Tier documentation",
       "url": "https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm",
-      "note": "Always Free compute allowances for Ampere A1 and AMD micro shapes."
+      "note": "Always Free compute allowances for Ampere A1 and AMD micro shapes. A1 is currently reported by the Core Services API as LIMITED_FREE even though the documented allowance (3,000 OCPU hours / 18,000 GB hours per month, equivalent to 4 OCPU and 24 GB) is unchanged; the snapshot records the documented free quota rather than treating every LIMITED_FREE shape as free."
     },
     {
       "source": "OCI Core Services API, Shape.billingType",
@@ -29,7 +29,7 @@
     {
       "id": "ampere-a1-flex",
       "shapes": ["VM.Standard.A1.Flex"],
-      "description": "Ampere A1 flexible shape, pooled across all instances in the tenancy.",
+      "description": "Ampere A1 flexible shape, pooled across all instances in the tenancy. 3,000 OCPU hours and 18,000 GB hours per month, equivalent to 4 OCPU and 24 GB running continuously.",
       "max_ocpus": 4.0,
       "max_memory_gb": 24.0,
       "max_instances": null,

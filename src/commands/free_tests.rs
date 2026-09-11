@@ -4,7 +4,7 @@
 //! usage arithmetic that gates every launch is verified without a network.
 
 use super::*;
-use crate::policy::snapshot::PolicySnapshot;
+use crate::{policy::snapshot::PolicySnapshot, testing::mock_oci::MockOci};
 
 fn snapshot() -> PolicySnapshot {
     PolicySnapshot::load().expect("snapshot")
@@ -168,4 +168,124 @@ fn uncertain_usage_is_reported_as_undeterminable() {
     let rendered = render_human(&report);
     assert!(rendered.contains("remaining  cannot be determined"));
     assert!(rendered.contains("blocked"));
+}
+
+fn shapes_with_a1_billing(billing: serde_json::Value) -> serde_json::Value {
+    serde_json::json!([
+        {
+            "shape": "VM.Standard.A1.Flex",
+            "billingType": billing,
+            "processorDescription": "2.8 GHz Ampere Altra",
+            "ocpus": 1.0,
+            "memoryInGBs": 6.0,
+            "isFlexible": true,
+            "ocpuOptions": { "min": 1.0, "max": 80.0 },
+            "memoryOptions": { "minInGBs": 1.0, "maxInGBs": 512.0 }
+        },
+        { "shape": "VM.Standard.E2.1.Micro", "billingType": "ALWAYS_FREE", "ocpus": 1.0, "memoryInGBs": 1.0 }
+    ])
+}
+
+fn free_context(mock: &MockOci) -> CommandContext {
+    CommandContext::for_tests(mock.client(), "us-ashburn-1")
+}
+
+/// OCI reports the A1 shape as LIMITED_FREE while the documented Free Tier
+/// allowance stands. For a snapshot-covered shape that is the verified,
+/// expected state — it must not be reported as an out-of-date snapshot.
+#[tokio::test]
+async fn a_limited_free_snapshot_shape_is_verified_not_out_of_date() {
+    let mock = MockOci::builder()
+        .get(
+            "/shapes",
+            &shapes_with_a1_billing(serde_json::json!("LIMITED_FREE")),
+        )
+        .get("/instances", &serde_json::json!([]))
+        .start()
+        .await;
+
+    let report = run(&free_context(&mock)).await.expect("free list succeeds");
+    let arm = report
+        .allowances
+        .iter()
+        .find(|allowance| allowance.allowance_id == "ampere-a1-flex")
+        .expect("arm allowance");
+
+    assert!(
+        arm.blockers.is_empty(),
+        "a trusted LIMITED_FREE shape is not a blocker: {:?}",
+        arm.blockers
+    );
+    assert_eq!(
+        arm.billing_types
+            .get("VM.Standard.A1.Flex")
+            .map(String::as_str),
+        Some("LIMITED_FREE")
+    );
+
+    let rendered = render_human(&report);
+    assert!(rendered.contains("LIMITED_FREE, verified within this allowance"));
+    assert!(!rendered.contains("out of date"));
+    assert!(report.warnings.iter().any(|warning| {
+        warning.contains("LIMITED_FREE") && warning.contains("verified snapshot allowance")
+    }));
+}
+
+/// A snapshot-covered shape OCI now labels PAID means the snapshot disagrees
+/// with live evidence, and the shape must stop being recommended.
+#[tokio::test]
+async fn a_paid_snapshot_shape_is_reported_out_of_date() {
+    let mock = MockOci::builder()
+        .get(
+            "/shapes",
+            &shapes_with_a1_billing(serde_json::json!("PAID")),
+        )
+        .get("/instances", &serde_json::json!([]))
+        .start()
+        .await;
+
+    let report = run(&free_context(&mock)).await.expect("free list succeeds");
+    let arm = report
+        .allowances
+        .iter()
+        .find(|allowance| allowance.allowance_id == "ampere-a1-flex")
+        .expect("arm allowance");
+
+    assert!(
+        arm.blockers
+            .iter()
+            .any(|blocker| blocker.contains("PAID") && blocker.contains("out of date")),
+        "a paid relabel must block: {:?}",
+        arm.blockers
+    );
+    assert!(render_human(&report).contains("PAID, not free"));
+}
+
+/// An unrecognised billing label fails closed: never recommended.
+#[tokio::test]
+async fn an_unrecognised_billing_label_blocks_the_snapshot_shape() {
+    let mock = MockOci::builder()
+        .get(
+            "/shapes",
+            &shapes_with_a1_billing(serde_json::json!("SOME_NEW_CATEGORY")),
+        )
+        .get("/instances", &serde_json::json!([]))
+        .start()
+        .await;
+
+    let report = run(&free_context(&mock)).await.expect("free list succeeds");
+    let arm = report
+        .allowances
+        .iter()
+        .find(|allowance| allowance.allowance_id == "ampere-a1-flex")
+        .expect("arm allowance");
+
+    assert!(
+        arm.blockers
+            .iter()
+            .any(|blocker| blocker.contains("recognised billing classification")),
+        "an unknown label must block: {:?}",
+        arm.blockers
+    );
+    assert!(render_human(&report).contains("unrecognised billing"));
 }

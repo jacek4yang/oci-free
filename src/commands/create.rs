@@ -252,16 +252,13 @@ fn choose_shape(
     request: &CreateRequest,
     shapes: &[Shape],
 ) -> Result<Shape> {
+    // The policy engine decides what "free-eligible" means: OCI's own billing
+    // classification (ALWAYS_FREE, or LIMITED_FREE for a shape the trusted
+    // snapshot explicitly covers) plus a verified allowance. Capacity is still
+    // enforced later, per launch, by `evaluate_launch`.
     let free_shapes: Vec<&Shape> = shapes
         .iter()
-        .filter(|shape| shape.is_always_free())
-        .filter(|shape| {
-            context
-                .policy()
-                .snapshot()
-                .allowance_for(&shape.shape)
-                .is_some()
-        })
+        .filter(|shape| context.policy().is_free_candidate(shape))
         .collect();
     let requested = match &request.shape {
         Some(requested) => requested.clone(),
@@ -301,7 +298,7 @@ fn choose_shape(
     resolved.ok_or_else(|| {
         Error::not_found(format!("`{requested}` is not offered in this region"))
             .with_context(format!(
-                "OCI currently offers these Always Free shapes here: {}",
+                "OCI currently offers these free-eligible shapes here: {}",
                 if free_shapes.is_empty() {
                     "none".to_owned()
                 } else {
@@ -346,9 +343,10 @@ fn describe_shape(shape: &Shape) -> String {
 }
 
 fn no_free_shape(shapes: &[Shape]) -> Error {
-    Error::billing_uncertain("no shape in this region is verified Always Free")
+    Error::billing_uncertain("no shape in this region is verified free-eligible")
         .with_context(format!(
-            "OCI offers {} shape(s) here, none of which is both reported as ALWAYS_FREE and covered by a verified allowance",
+            "OCI offers {} shape(s) here, none of which is reported as ALWAYS_FREE (or \
+             LIMITED_FREE with a verified snapshot allowance)",
             shapes.len()
         ))
         .with_remediation("run `oci-free free list` to see the evidence")

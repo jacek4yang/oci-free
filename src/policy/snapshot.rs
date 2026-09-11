@@ -1,10 +1,11 @@
 //! The conservative Free Tier policy snapshot.
 //!
 //! OCI reports a per-shape `billingType`, which tells us *whether* a shape is
-//! Always Free. It does not tell us *how much* of that shape a tenancy may use.
-//! The published allowances (4 OCPU / 24 GB of Ampere A1, two AMD micro
-//! instances) live only in Oracle's documentation, so they are recorded here as
-//! a reviewable, dated snapshot rather than scattered through command modules.
+//! Always Free or limited-free. It does not tell us *how much* of that shape a
+//! tenancy may use. The published allowances (4 OCPU / 24 GB of Ampere A1, two
+//! AMD micro instances) live only in Oracle's documentation, so they are
+//! recorded here as a reviewable, dated snapshot rather than scattered through
+//! command modules.
 //!
 //! The snapshot is deliberately narrow. It never widens eligibility: a resource
 //! class it does not list is Unknown, and Unknown blocks. It is also never
