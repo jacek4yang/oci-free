@@ -11,9 +11,16 @@
 //! gets the specific facts, not a bare boolean, which is what
 //! `oci-free policy explain` renders.
 //!
-//! Strict mode is the default and the only mode: exactly one classification,
-//! `VerifiedAlwaysFree`, permits a mutation. Everything else, including
-//! anything uncertain, blocks.
+//! Strict mode is the default and the only mode: a mutation is permitted only
+//! when the result classifies as `VerifiedAlwaysFree`. That is proven when:
+//!
+//! - OCI reports `ALWAYS_FREE`, or reports `LIMITED_FREE` for a shape the
+//!   trusted policy snapshot lists with an explicit free allowance; and
+//! - remaining tenancy usage plus the request fits that allowance.
+//!
+//! Bare `LIMITED_FREE` without a snapshot allowance, `Paid`, and `Unknown`
+//! always block. Snapshot membership alone never widens a paid or unrecognised
+//! billing type into a free one.
 
 use serde::Serialize;
 
@@ -100,28 +107,43 @@ impl PolicyEngine {
             }
         };
 
-        // Being Always Free is necessary but not sufficient: without a known
-        // allowance this build cannot prove how much may be used.
-        if classification == FreeClassification::VerifiedAlwaysFree {
+        // A free billing category is necessary but not sufficient: without a
+        // known allowance this build cannot prove how much may be used.
+        if matches!(
+            classification,
+            FreeClassification::VerifiedAlwaysFree | FreeClassification::LimitedFree
+        ) {
             match self.snapshot.allowance_for(&shape.shape) {
-                Some(allowance) => evidence.push(Evidence {
-                    source: self.snapshot.citation(),
-                    detail: format!(
-                        "allowance `{}` covers this shape: up to {:.2} OCPU and {:.2} GB{}",
-                        allowance.id,
-                        allowance.max_ocpus,
-                        allowance.max_memory_gb,
-                        allowance
-                            .max_instances
-                            .map(|max| format!(", at most {max} instances"))
-                            .unwrap_or_default()
-                    ),
-                }),
-                None => warnings.push(format!(
-                    "OCI reports {} as Always Free, but this build has no verified allowance \
-                     for it, so the amount that stays free cannot be proven",
-                    shape.shape
-                )),
+                Some(allowance) => {
+                    evidence.push(Evidence {
+                        source: self.snapshot.citation(),
+                        detail: format!(
+                            "allowance `{}` covers this shape: up to {:.2} OCPU and {:.2} GB{}",
+                            allowance.id,
+                            allowance.max_ocpus,
+                            allowance.max_memory_gb,
+                            allowance
+                                .max_instances
+                                .map(|max| format!(", at most {max} instances"))
+                                .unwrap_or_default()
+                        ),
+                    });
+                    if classification == FreeClassification::LimitedFree {
+                        warnings.push(format!(
+                            "OCI reports {} as LIMITED_FREE; mutations are permitted only while \
+                             remaining snapshot capacity is proven",
+                            shape.shape
+                        ));
+                    }
+                }
+                None if classification == FreeClassification::VerifiedAlwaysFree => {
+                    warnings.push(format!(
+                        "OCI reports {} as Always Free, but this build has no verified \
+                         allowance for it, so the amount that stays free cannot be proven",
+                        shape.shape
+                    ));
+                }
+                None => {}
             }
         }
 
@@ -130,6 +152,19 @@ impl PolicyEngine {
             evidence,
             warnings,
         }
+    }
+
+    /// Whether this live shape may be offered as a free-eligible choice.
+    ///
+    /// Requires a free billing category (`ALWAYS_FREE` or `LIMITED_FREE`) *and*
+    /// a verified snapshot allowance. `LIMITED_FREE` without a snapshot entry
+    /// is not a candidate.
+    #[must_use]
+    pub fn is_free_candidate(&self, shape: &Shape) -> bool {
+        matches!(
+            shape.billing_type,
+            ShapeBillingType::AlwaysFree | ShapeBillingType::LimitedFree
+        ) && self.snapshot.allowance_for(&shape.shape).is_some()
     }
 
     /// Evaluate a proposed launch: eligibility *and* remaining capacity.
@@ -144,8 +179,27 @@ impl PolicyEngine {
         let mut evidence = assessment.evidence;
         let mut warnings = assessment.warnings;
 
-        // Not free at all: stop here. Capacity is irrelevant.
-        if assessment.classification != FreeClassification::VerifiedAlwaysFree {
+        // A candidate is ALWAYS_FREE or LIMITED_FREE *and* listed in the
+        // snapshot. Paid/unknown billing never proceed, even if the snapshot
+        // names the shape. LIMITED_FREE without a snapshot entry never
+        // proceeds: that is the fail-closed rule against treating every
+        // limited-free shape as free. Always Free without an allowance
+        // downgrades to Unknown rather than approving.
+        if !self.is_free_candidate(shape) {
+            if shape.billing_type == ShapeBillingType::AlwaysFree {
+                return SafetyDecision {
+                    allowed: false,
+                    classification: FreeClassification::Unknown,
+                    reason: format!(
+                        "{} is Always Free, but oci-free has no verified allowance for it and \
+                         cannot prove this launch stays inside the free limit",
+                        shape.shape
+                    ),
+                    evidence,
+                    warnings,
+                    capacity: None,
+                };
+            }
             return SafetyDecision {
                 allowed: false,
                 classification: assessment.classification,
@@ -156,8 +210,6 @@ impl PolicyEngine {
             };
         }
 
-        // Always Free, but with no allowance this build cannot prove how much
-        // remains free. Downgrade to Unknown rather than approving.
         let Some(allowance) = self.snapshot.allowance_for(&shape.shape) else {
             return SafetyDecision {
                 allowed: false,
@@ -192,10 +244,17 @@ impl PolicyEngine {
             return SafetyDecision {
                 allowed: true,
                 classification: FreeClassification::VerifiedAlwaysFree,
-                reason: format!(
-                    "{} is Always Free and this configuration fits the remaining allowance",
-                    shape.shape
-                ),
+                reason: match shape.billing_type {
+                    ShapeBillingType::LimitedFree => format!(
+                        "{} is reported as LIMITED_FREE, is covered by a verified snapshot \
+                         allowance, and this configuration fits the remaining allowance",
+                        shape.shape
+                    ),
+                    _ => format!(
+                        "{} is Always Free and this configuration fits the remaining allowance",
+                        shape.shape
+                    ),
+                },
                 evidence,
                 warnings,
                 capacity: Some(capacity),
@@ -212,8 +271,8 @@ impl PolicyEngine {
         };
         let reason = if capacity.is_certain() {
             format!(
-                "{} is Always Free, but this configuration exceeds the remaining allowance and \
-                 would be billed",
+                "{} is covered by a verified free allowance, but this configuration exceeds \
+                 the remaining allowance and would be billed",
                 shape.shape
             )
         } else {
@@ -247,7 +306,8 @@ pub fn reason_for(classification: FreeClassification, shape: &str) -> String {
             format!("{shape} is verified Always Free")
         }
         FreeClassification::LimitedFree => format!(
-            "{shape} is only free within a limited allowance, which strict mode does not permit"
+            "{shape} is reported as LIMITED_FREE; strict mode permits it only when a verified \
+             snapshot allowance covers the shape and remaining capacity is proven"
         ),
         FreeClassification::Paid => format!("{shape} is a paid shape"),
         FreeClassification::Unknown => format!(

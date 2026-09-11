@@ -370,6 +370,46 @@ async fn the_arm_selector_resolves_from_live_processor_metadata() {
     assert_eq!(result.shape, "VM.Standard.A1.Flex");
 }
 
+/// OCI now reports A1 as LIMITED_FREE. The selector must still resolve it
+/// because the snapshot explicitly trusts the shape; the launch itself stays
+/// gated by the policy engine's capacity check.
+#[tokio::test]
+async fn the_arm_selector_resolves_a_limited_free_trusted_shape() {
+    let mut shapes = shapes_json();
+    shapes[0]["billingType"] = json!("LIMITED_FREE");
+    let mock = scenario(json!([]))
+        .override_reply("GET", "/shapes", Reply::json(&shapes))
+        .start()
+        .await;
+    let mut request = request();
+    request.shape = Some(SELECTOR_ARM.to_owned());
+
+    let (plan, result) = run(&context(&mock), &request)
+        .await
+        .expect("create succeeds");
+    assert_eq!(result.shape, "VM.Standard.A1.Flex");
+    assert!(plan.is_safe(), "a trusted LIMITED_FREE launch is safe");
+}
+
+/// A LIMITED_FREE shape the snapshot does not trust must not be selectable.
+#[tokio::test]
+async fn a_limited_free_shape_without_a_snapshot_allowance_is_refused() {
+    let mut shapes = shapes_json();
+    shapes[2]["billingType"] = json!("LIMITED_FREE");
+    let mock = scenario(json!([]))
+        .override_reply("GET", "/shapes", Reply::json(&shapes))
+        .start()
+        .await;
+    let mut request = request();
+    request.shape = Some("VM.Standard3.Flex".to_owned());
+
+    let error = run(&context(&mock), &request)
+        .await
+        .expect_err("an untrusted LIMITED_FREE shape must be refused");
+    assert_eq!(error.kind(), crate::error::ErrorKind::PolicyRejected);
+    assert!(mock.writes().is_empty());
+}
+
 #[tokio::test]
 async fn the_x86_selector_resolves_to_the_micro_shape() {
     let mock = scenario(json!([])).start().await;

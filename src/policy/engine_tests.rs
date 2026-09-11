@@ -1,7 +1,8 @@
 //! Policy engine tests.
 //!
 //! These encode the fail-closed contract from CLAUDE.md. Every case that is not
-//! provably Always Free *and* provably within the allowance must refuse.
+//! a snapshot-backed free billing category *and* provably within the allowance
+//! must refuse. LIMITED_FREE is allowed only for shapes the snapshot lists.
 
 use super::*;
 use crate::{
@@ -68,15 +69,11 @@ fn always_free_within_allowance_is_permitted() {
     assert!(decision.capacity.expect("capacity").fits);
 }
 
-/// The three non-free classifications must all block. This is the core
-/// invariant from CLAUDE.md.
+/// Paid and unrecognised billing must still fail closed, including on a
+/// snapshot-listed shape such as A1.
 #[test]
-fn limited_free_paid_and_unknown_all_fail_closed() {
+fn paid_and_unknown_billing_fail_closed_even_for_a1() {
     let cases = [
-        (
-            ShapeBillingType::LimitedFree,
-            FreeClassification::LimitedFree,
-        ),
         (ShapeBillingType::Paid, FreeClassification::Paid),
         (ShapeBillingType::Unknown, FreeClassification::Unknown),
     ];
@@ -100,20 +97,56 @@ fn limited_free_paid_and_unknown_all_fail_closed() {
     }
 }
 
-/// LimitedFree is explicitly not "free enough". It is a distinct category and
-/// must never be silently upgraded.
+/// LIMITED_FREE A1 is in the snapshot, so a launch that fits the remaining
+/// quota is permitted. This is not a blanket LIMITED_FREE exemption.
 #[test]
-fn limited_free_is_never_treated_as_always_free() {
+fn limited_free_a1_within_allowance_is_permitted() {
     let decision = engine().evaluate_launch(
         &arm(ShapeBillingType::LimitedFree),
-        draw(1.0, 1.0),
+        draw(2.0, 12.0),
         &ComputeUsage::default(),
     );
-    assert_ne!(
+
+    assert!(decision.allowed);
+    assert!(decision.permits_mutation());
+    assert_eq!(
         decision.classification,
         FreeClassification::VerifiedAlwaysFree
     );
-    assert!(decision.reason.contains("limited allowance"));
+    assert!(decision.reason.contains("LIMITED_FREE"));
+    assert!(decision.reason.contains("fits the remaining allowance"));
+    assert!(decision.capacity.expect("capacity").fits);
+}
+
+/// LIMITED_FREE A1 that would exceed the snapshot quota is billed, so it
+/// must be refused.
+#[test]
+fn limited_free_a1_over_allowance_is_rejected() {
+    let decision = engine().evaluate_launch(
+        &arm(ShapeBillingType::LimitedFree),
+        draw(1.0, 6.0),
+        &used(4.0, 24.0, 2),
+    );
+
+    assert!(!decision.allowed);
+    assert!(!decision.permits_mutation());
+    assert_eq!(decision.classification, FreeClassification::Paid);
+    assert!(decision.reason.contains("would be billed"));
+    assert!(!decision.capacity.expect("capacity").fits);
+}
+
+/// A LIMITED_FREE shape the snapshot does not list is never treated as free,
+/// even with empty usage.
+#[test]
+fn unknown_limited_free_shape_is_rejected() {
+    let unknown = shape("VM.Standard.Future.Flex", ShapeBillingType::LimitedFree);
+    let decision = engine().evaluate_launch(&unknown, draw(1.0, 1.0), &ComputeUsage::default());
+
+    assert!(!decision.allowed);
+    assert!(!decision.permits_mutation());
+    assert_eq!(decision.classification, FreeClassification::LimitedFree);
+    assert!(decision.reason.contains("LIMITED_FREE"));
+    assert!(decision.capacity.is_none());
 }
 
 /// A shape OCI calls Always Free but that this build has no allowance for
@@ -262,11 +295,20 @@ fn permits_mutation_is_true_only_for_verified_always_free() {
     );
     assert!(permitted.permits_mutation());
 
-    for billing in [
-        ShapeBillingType::LimitedFree,
-        ShapeBillingType::Paid,
-        ShapeBillingType::Unknown,
-    ] {
+    // A snapshot-listed LIMITED_FREE shape within its allowance verifies as
+    // Always Free and may proceed.
+    let trusted = engine.evaluate_launch(
+        &arm(ShapeBillingType::LimitedFree),
+        draw(1.0, 6.0),
+        &ComputeUsage::default(),
+    );
+    assert!(trusted.permits_mutation());
+    assert_eq!(
+        trusted.classification,
+        FreeClassification::VerifiedAlwaysFree
+    );
+
+    for billing in [ShapeBillingType::Paid, ShapeBillingType::Unknown] {
         let decision =
             engine.evaluate_launch(&arm(billing), draw(1.0, 6.0), &ComputeUsage::default());
         assert!(
@@ -275,6 +317,15 @@ fn permits_mutation_is_true_only_for_verified_always_free() {
             billing.as_str()
         );
     }
+
+    // LIMITED_FREE is gated by the snapshot, not by the billing type alone: a
+    // limited-free shape the snapshot does not list must never permit.
+    let unlisted = shape("VM.Standard.Future.Flex", ShapeBillingType::LimitedFree);
+    let decision = engine.evaluate_launch(&unlisted, draw(1.0, 6.0), &ComputeUsage::default());
+    assert!(
+        !decision.permits_mutation(),
+        "LIMITED_FREE without a snapshot allowance must never permit a mutation"
+    );
 
     // Even a hand-built decision claiming `allowed` must be gated on the
     // classification, so a future bug that flips one field cannot open the gate.

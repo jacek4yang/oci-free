@@ -8,7 +8,7 @@ use crate::{
     commands::context::CommandContext,
     domain::capacity::{CapacityAssessment, ComputeUsage, InstanceDraw, remaining},
     error::Result,
-    oci::compute::{ComputeApi, Instance, Shape},
+    oci::compute::{ComputeApi, Instance, Shape, ShapeBillingType},
     policy::snapshot::PolicySnapshot,
 };
 
@@ -102,9 +102,13 @@ pub async fn run(context: &CommandContext) -> Result<FreeReport> {
         let used = usage.get(&allowance.id).cloned().unwrap_or_default();
         let capacity = remaining(allowance, &used);
 
-        // Cross-check the snapshot against OCI's live billing evidence. If OCI
-        // no longer calls a covered shape Always Free, the snapshot is stale
-        // and must not be used to recommend it.
+        // Cross-check the snapshot against OCI's live billing evidence. A
+        // LIMITED_FREE report for a snapshot-covered shape is the expected
+        // state for the Ampere A1 allowance (OCI labels the shape
+        // LIMITED_FREE while the documented Free Tier quota stands), so it is
+        // reported rather than blocked. Any other non-free label means the
+        // snapshot disagrees with OCI and must not be used to recommend the
+        // shape.
         let mut billing_types = BTreeMap::new();
         let mut blockers = Vec::new();
         for shape_name in &allowance.shapes {
@@ -115,12 +119,21 @@ pub async fn run(context: &CommandContext) -> Result<FreeReport> {
                 Some(shape) => {
                     billing_types
                         .insert(shape_name.clone(), shape.billing_type.as_str().to_owned());
-                    if !shape.is_always_free() {
-                        blockers.push(format!(
-                            "OCI now reports {shape_name} as {}, not ALWAYS_FREE; the policy \
-                             snapshot is out of date and this shape is not being recommended",
-                            shape.billing_type.as_str()
-                        ));
+                    match shape.billing_type {
+                        ShapeBillingType::AlwaysFree => {}
+                        ShapeBillingType::LimitedFree => warnings.push(format!(
+                            "{shape_name} is reported as LIMITED_FREE; oci-free treats it as \
+                             free only within the verified snapshot allowance"
+                        )),
+                        ShapeBillingType::Paid => blockers.push(format!(
+                            "OCI now reports {shape_name} as PAID, not free; the policy \
+                             snapshot is out of date and this shape is not being recommended"
+                        )),
+                        ShapeBillingType::Unknown => blockers.push(format!(
+                            "OCI did not report a recognised billing classification for \
+                             {shape_name}; the policy snapshot cannot be confirmed and this \
+                             shape is not being recommended"
+                        )),
                     }
                 }
                 None => blockers.push(format!(
@@ -171,6 +184,15 @@ pub fn render_human(report: &FreeReport) -> String {
         out.push_str(&format!("{}\n", allowance.description));
         out.push_str(&format!("  shapes     {}\n", allowance.shapes.join(", ")));
 
+        if !allowance.billing_types.is_empty() {
+            let described: Vec<String> = allowance
+                .billing_types
+                .iter()
+                .map(|(shape, billing)| describe_billing(shape, billing))
+                .collect();
+            out.push_str(&format!("  billing    {}\n", described.join("; ")));
+        }
+
         let capacity = &allowance.capacity;
         out.push_str(&format!(
             "  used       {:.2} of {:.2} OCPU, {:.2} of {:.2} GB, {} instance(s)\n",
@@ -206,6 +228,18 @@ pub fn render_human(report: &FreeReport) -> String {
         out.push_str(&format!("note: {warning}\n"));
     }
     out
+}
+
+/// One shape's live billing label, phrased so the reader can tell a verified
+/// allowance from a shape that merely calls itself free.
+#[must_use]
+fn describe_billing(shape: &str, billing: &str) -> String {
+    match billing {
+        "ALWAYS_FREE" => format!("{shape}: ALWAYS_FREE"),
+        "LIMITED_FREE" => format!("{shape}: LIMITED_FREE, verified within this allowance"),
+        "PAID" => format!("{shape}: PAID, not free"),
+        other => format!("{shape}: unrecognised billing ({other})"),
+    }
 }
 
 #[cfg(test)]

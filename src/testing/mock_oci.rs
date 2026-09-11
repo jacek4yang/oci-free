@@ -259,21 +259,42 @@ impl MockOci {
     }
 
     async fn spawn(routes: Vec<Route>, fallback: Vec<Reply>) -> Self {
-        // The transport connects by IP, so the certificate must carry 127.0.0.1
-        // as a subject alternative name or rustls rejects the handshake.
-        let certificate = rcgen::generate_simple_self_signed(vec![
-            "127.0.0.1".to_owned(),
-            "localhost".to_owned(),
-        ])
-        .expect("certificate");
-        let certificate_der = certificate.cert.der().to_vec();
-        let key_der = certificate.signing_key.serialize_der();
+        // The transport connects by IP, so the leaf certificate must carry
+        // 127.0.0.1 as a subject alternative name or rustls rejects the
+        // handshake. Windows additionally verifies through the OS certificate
+        // chain engine (reqwest's rustls-platform-verifier), which only
+        // accepts trust anchors that carry CA basic constraints, so the mock
+        // serves a leaf signed by an explicitly generated CA rather than one
+        // bare self-signed certificate.
+        let ca_key = rcgen::KeyPair::generate().expect("CA key");
+        let mut ca_params = rcgen::CertificateParams::default();
+        ca_params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "oci-free mock CA");
+        ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        ca_params.key_usages = vec![rcgen::KeyUsagePurpose::KeyCertSign];
+        let ca = ca_params.self_signed(&ca_key).expect("CA certificate");
+        let issuer = rcgen::Issuer::new(ca_params, ca_key);
+
+        let leaf_key = rcgen::KeyPair::generate().expect("leaf key");
+        let mut leaf_params =
+            rcgen::CertificateParams::new(vec!["127.0.0.1".to_owned(), "localhost".to_owned()])
+                .expect("leaf certificate parameters");
+        leaf_params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ServerAuth];
+        let leaf = leaf_params
+            .signed_by(&leaf_key, &issuer)
+            .expect("leaf certificate");
+
+        // Clients must trust the CA, not the leaf.
+        let certificate_der = ca.der().to_vec();
 
         let config = ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(
-                vec![certificate.cert.der().clone()],
-                tokio_rustls::rustls::pki_types::PrivateKeyDer::Pkcs8(key_der.into()),
+                vec![leaf.der().clone(), ca.der().clone()],
+                tokio_rustls::rustls::pki_types::PrivateKeyDer::Pkcs8(
+                    leaf_key.serialize_der().into(),
+                ),
             )
             .expect("server config");
         let acceptor = TlsAcceptor::from(Arc::new(config));

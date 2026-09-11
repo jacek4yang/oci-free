@@ -176,13 +176,22 @@ impl OciClient {
         let http = http.no_proxy();
 
         // `extra_roots` is only ever non-empty in tests; release builds get an
-        // empty vector and leave the trust store untouched.
-        let http = extra_roots.into_iter().try_fold(http, |builder, root| {
-            let certificate = reqwest::Certificate::from_der(&root).map_err(|error| {
-                Error::network(format!("could not load an additional trust root: {error}"))
-            })?;
-            Ok::<_, Error>(builder.add_root_certificate(certificate))
-        })?;
+        // empty vector and leave the trust store untouched. Tests use the
+        // roots exclusively (webpki verification) rather than merging them
+        // into the platform verifier: the Windows chain engine refuses to
+        // treat non-system trust anchors as valid for loopback test servers.
+        let http = if extra_roots.is_empty() {
+            http
+        } else {
+            let mut certificates = Vec::new();
+            for root in extra_roots {
+                let certificate = reqwest::Certificate::from_der(&root).map_err(|error| {
+                    Error::network(format!("could not load an additional trust root: {error}"))
+                })?;
+                certificates.push(certificate);
+            }
+            http.tls_certs_only(certificates)
+        };
 
         let http = http.build().map_err(|error| {
             Error::network(format!("could not initialise the HTTPS client: {error}"))
